@@ -97,6 +97,14 @@ spec:
               mountPath: /app/backend/open_webui/static/custom.css
               subPath: custom.css
               readOnly: true
+            - name: branding-splash
+              mountPath: /app/backend/open_webui/static/splash.png
+              subPath: splash.png
+              readOnly: true
+            - name: branding-splash-dark
+              mountPath: /app/backend/open_webui/static/splash-dark.png
+              subPath: splash-dark.png
+              readOnly: true
           resources:
             requests:
               cpu: 250m
@@ -139,6 +147,12 @@ spec:
         - name: branding-css
           configMap:
             name: branding-css
+        - name: branding-splash
+          configMap:
+            name: branding-splash
+        - name: branding-splash-dark
+          configMap:
+            name: branding-splash-dark
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
