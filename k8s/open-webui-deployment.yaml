@@ -59,9 +59,44 @@ spec:
               value: "false"
             - name: ENABLE_COMMUNITY_SHARING
               value: "false"
+            # Branding
+            - name: WEBUI_NAME
+              value: "Envision OS"
+            - name: WEBUI_URL
+              value: "https://os.envsn.com"
+            # Security
+            - name: CORS_ALLOW_ORIGIN
+              value: "https://os.envsn.com"
+            - name: ENABLE_ADMIN_EXPORT
+              value: "false"
+            - name: ENABLE_ADMIN_CHAT_ACCESS
+              value: "false"
+            # Performance
+            - name: DATABASE_POOL_SIZE
+              value: "20"
+            - name: THREAD_POOL_SIZE
+              value: "100"
+            - name: ENABLE_REALTIME_CHAT_SAVE
+              value: "false"
           volumeMounts:
             - name: webui-data
               mountPath: /app/backend/data
+            - name: branding-bg
+              mountPath: /app/backend/open_webui/static/background.jpg
+              subPath: background.jpg
+              readOnly: true
+            - name: branding-logo
+              mountPath: /app/backend/open_webui/static/logo.png
+              subPath: logo.png
+              readOnly: true
+            - name: branding-favicon
+              mountPath: /app/backend/open_webui/static/favicon.png
+              subPath: favicon.png
+              readOnly: true
+            - name: branding-css
+              mountPath: /app/backend/open_webui/static/custom.css
+              subPath: custom.css
+              readOnly: true
           resources:
             requests:
               cpu: 250m
@@ -92,6 +127,18 @@ spec:
         - name: webui-data
           persistentVolumeClaim:
             claimName: open-webui-data
+        - name: branding-bg
+          configMap:
+            name: branding-background
+        - name: branding-logo
+          configMap:
+            name: branding-logo
+        - name: branding-favicon
+          configMap:
+            name: branding-favicon
+        - name: branding-css
+          configMap:
+            name: branding-css
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

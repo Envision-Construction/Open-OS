@@ -4,58 +4,61 @@ author: Avi Reddy
 version: 1.0.0
 license: MIT
 description: Personal AI OS — Gmail, Calendar, Drive, Slack, WhatsApp + 390 Envision construction tools with OAuth connection flow
-required_pip_packages: google-auth google-auth-oauthlib google-api-python-client aiohttp
+required_pip_packages: google-auth google-auth-oauthlib google-api-python-client aiohttp slack_sdk
 """
 
 from pydantic import BaseModel, Field
 from typing import Any, Callable, Optional
+import asyncio
 import json
+import os
 
 
 class Tools:
     class Valves(BaseModel):
-        # Google OAuth
         google_client_id: str = Field(
-            default="",
-            description="Google OAuth Client ID (Web Application type)",
+            default=os.getenv("GOOGLE_CLIENT_ID", ""),
+            description="Google OAuth Client ID",
         )
         google_client_secret: str = Field(
-            default="",
+            default=os.getenv("GOOGLE_CLIENT_SECRET", ""),
             description="Google OAuth Client Secret",
         )
         google_refresh_token: str = Field(
-            default="",
-            description="Auto-filled after OAuth flow — do not edit manually",
+            default=os.getenv("GOOGLE_REFRESH_TOKEN", ""),
+            description="Google OAuth Refresh Token",
         )
         google_oauth_redirect_uri: str = Field(
-            default="https://storage.googleapis.com/open-os-oauth-callback/callback.html",
-            description="OAuth callback URL",
+            default=os.getenv(
+                "GOOGLE_OAUTH_REDIRECT_URI", "urn:ietf:wg:oauth:2.0:oob"
+            ),
+            description="OAuth Redirect URI",
         )
-        # Slack
         slack_bot_token: str = Field(
-            default="",
+            default=os.getenv("SLACK_BOT_TOKEN", ""),
             description="Slack Bot Token (xoxb-...)",
         )
         slack_user_token: str = Field(
-            default="",
-            description="Slack User Token for search (xoxp-...)",
+            default=os.getenv("SLACK_USER_TOKEN", ""),
+            description="Slack User Token for search",
         )
-        # WhatsApp
         whatsapp_access_token: str = Field(
-            default="",
+            default=os.getenv("WHATSAPP_ACCESS_TOKEN", ""),
             description="WhatsApp Cloud API Access Token",
         )
         whatsapp_phone_number_id: str = Field(
-            default="",
+            default=os.getenv("WHATSAPP_PHONE_ID", ""),
             description="WhatsApp Phone Number ID",
         )
         whatsapp_business_account_id: str = Field(
-            default="",
+            default=os.getenv("WHATSAPP_BUSINESS_ID", ""),
             description="WhatsApp Business Account ID",
         )
-        # Envision MCP
         envision_mcp_url: str = Field(
-            default="https://envision-mcp-845049957105.us-central1.run.app/mcp",
+            default=os.getenv(
+                "ENVISION_MCP_URL",
+                "https://envision-mcp-845049957105.us-central1.run.app/mcp",
+            ),
             description="Envision MCP Gateway URL",
         )
 
@@ -64,10 +67,11 @@ class Tools:
         self._mcp_session_id = None
         self._mcp_initialized = False
         self._mcp_request_id = 0
+        self._http_session = None
 
     async def connect_google_account(
         self,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Start the Google OAuth flow. Generates a clickable authorization URL. After authorizing in your browser, copy the code and use complete_google_connection to finish setup."""
@@ -77,7 +81,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -154,7 +158,7 @@ class Tools:
     async def complete_google_connection(
         self,
         authorization_code: str,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Complete the Google OAuth flow by exchanging an authorization code for access tokens. Provide the code from the OAuth callback page."""
@@ -164,7 +168,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -256,7 +260,7 @@ class Tools:
 
     async def check_connections(
         self,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Check which services are currently connected and configured."""
@@ -266,7 +270,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -324,7 +328,7 @@ class Tools:
         subject: str,
         body: str,
         cc: str = "",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Send an email via Gmail. Supports plain text and CC recipients (comma-separated)."""
@@ -334,7 +338,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -361,7 +365,7 @@ class Tools:
             from email.mime.text import MIMEText
             from googleapiclient.discovery import build
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("gmail", "v1", credentials=creds)
 
             message = MIMEText(body, "plain", "utf-8")
@@ -371,9 +375,11 @@ class Tools:
             message["subject"] = subject
 
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
-            service.users().messages().send(
+            loop = asyncio.get_event_loop()
+            request = service.users().messages().send(
                 userId="me", body={"raw": raw_message}
-            ).execute()
+            )
+            await loop.run_in_executor(None, request.execute)
 
             await emit(
                 {
@@ -398,7 +404,7 @@ class Tools:
         self,
         query: str,
         max_results: int = 10,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search Gmail emails. Use Gmail search syntax (from:, to:, subject:, has:attachment, after:, before:, is:unread)."""
@@ -408,7 +414,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -434,15 +440,16 @@ class Tools:
             from email.utils import parsedate_to_datetime
             from googleapiclient.discovery import build
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("gmail", "v1", credentials=creds)
 
-            response = (
+            loop = asyncio.get_event_loop()
+            request = (
                 service.users()
                 .messages()
                 .list(userId="me", q=query, maxResults=max_results)
-                .execute()
             )
+            response = await loop.run_in_executor(None, request.execute)
             messages = response.get("messages", [])
             if not messages:
                 await emit(
@@ -466,7 +473,7 @@ class Tools:
 
             for index, message in enumerate(messages, start=1):
                 message_id = message.get("id", "")
-                detail = (
+                request = (
                     service.users()
                     .messages()
                     .get(
@@ -475,8 +482,8 @@ class Tools:
                         format="metadata",
                         metadataHeaders=["Subject", "From", "Date"],
                     )
-                    .execute()
                 )
+                detail = await loop.run_in_executor(None, request.execute)
                 headers = detail.get("payload", {}).get("headers", [])
                 subject = get_header(headers, "Subject") or "(no subject)"
                 sender = get_header(headers, "From") or "(unknown sender)"
@@ -519,7 +526,7 @@ class Tools:
     async def read_email(
         self,
         message_id: str,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Read the full content of a specific email by its message ID."""
@@ -529,7 +536,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -556,15 +563,16 @@ class Tools:
             from email.utils import parsedate_to_datetime
             from googleapiclient.discovery import build
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("gmail", "v1", credentials=creds)
 
-            message = (
+            loop = asyncio.get_event_loop()
+            request = (
                 service.users()
                 .messages()
                 .get(userId="me", id=message_id, format="full")
-                .execute()
             )
+            message = await loop.run_in_executor(None, request.execute)
             payload = message.get("payload", {})
             headers = payload.get("headers", [])
 
@@ -648,7 +656,7 @@ class Tools:
         self,
         days_ahead: int = 7,
         max_results: int = 20,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """List upcoming Google Calendar events for the next N days."""
@@ -658,7 +666,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -684,14 +692,15 @@ class Tools:
             from datetime import datetime, timedelta, timezone
             from googleapiclient.discovery import build
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("calendar", "v3", credentials=creds)
 
             now = datetime.now(timezone.utc)
             time_min = now.isoformat()
             time_max = (now + timedelta(days=days_ahead)).isoformat()
 
-            response = (
+            loop = asyncio.get_event_loop()
+            request = (
                 service.events()
                 .list(
                     calendarId="primary",
@@ -701,8 +710,8 @@ class Tools:
                     singleEvents=True,
                     orderBy="startTime",
                 )
-                .execute()
             )
+            response = await loop.run_in_executor(None, request.execute)
             events = response.get("items", [])
             if not events:
                 await emit(
@@ -786,7 +795,7 @@ class Tools:
         description: str = "",
         attendees: str = "",
         location: str = "",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Create a Google Calendar event. Times in ISO 8601 format. Attendees as comma-separated emails."""
@@ -796,7 +805,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -822,7 +831,7 @@ class Tools:
             from datetime import datetime
             from googleapiclient.discovery import build
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("calendar", "v3", credentials=creds)
 
             attendee_list = []
@@ -841,7 +850,9 @@ class Tools:
             if attendee_list:
                 event["attendees"] = attendee_list
 
-            service.events().insert(calendarId="primary", body=event).execute()
+            loop = asyncio.get_event_loop()
+            request = service.events().insert(calendarId="primary", body=event)
+            await loop.run_in_executor(None, request.execute)
 
             def parse_iso(value: str) -> Optional[datetime]:
                 if not value:
@@ -892,7 +903,7 @@ class Tools:
         self,
         query: str,
         max_results: int = 20,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search Google Drive for files by name or content."""
@@ -902,7 +913,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -928,21 +939,22 @@ class Tools:
             from datetime import datetime
             from googleapiclient.discovery import build
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("drive", "v3", credentials=creds)
 
             safe_query = query.replace("'", "\\'")
             q = f"name contains '{safe_query}' or fullText contains '{safe_query}'"
 
-            response = (
+            loop = asyncio.get_event_loop()
+            request = (
                 service.files()
                 .list(
                     q=q,
                     pageSize=max_results,
                     fields="files(id, name, mimeType, modifiedTime, size)",
                 )
-                .execute()
             )
+            response = await loop.run_in_executor(None, request.execute)
             files = response.get("files", [])
             if not files:
                 await emit(
@@ -1024,7 +1036,7 @@ class Tools:
     async def read_drive_file(
         self,
         file_id: str,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Read the text content of a Google Drive file. Automatically exports Google Docs/Sheets/Slides to text."""
@@ -1034,7 +1046,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1062,14 +1074,15 @@ class Tools:
             from googleapiclient.discovery import build
             from googleapiclient.http import MediaIoBaseDownload
 
-            creds = self._get_google_creds()
+            creds = await self._get_google_creds()
             service = build("drive", "v3", credentials=creds)
 
-            metadata = (
+            loop = asyncio.get_event_loop()
+            request = (
                 service.files()
                 .get(fileId=file_id, fields="id, name, mimeType, modifiedTime, size")
-                .execute()
             )
+            metadata = await loop.run_in_executor(None, request.execute)
             mime_type = metadata.get("mimeType", "")
 
             export_mime = None
@@ -1147,7 +1160,7 @@ class Tools:
         channel: str,
         text: str,
         thread_ts: str = "",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Send a message to a Slack channel. Channel can be a name (#general) or ID."""
@@ -1157,7 +1170,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1258,7 +1271,7 @@ class Tools:
         self,
         query: str,
         max_results: int = 10,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search Slack messages. Requires user token (search:read scope)."""
@@ -1268,7 +1281,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1351,7 +1364,7 @@ class Tools:
         self,
         to: str,
         message: str,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Send a WhatsApp message. Phone number in international format (+15551234567)."""
@@ -1361,7 +1374,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1387,8 +1400,6 @@ class Tools:
                 )
                 return "❌ **Error:** WhatsApp credentials are not configured."
 
-            import aiohttp
-
             cleaned = "".join(ch for ch in to if ch.isdigit() or ch == "+")
             whatsapp_to = cleaned[1:] if cleaned.startswith("+") else cleaned
 
@@ -1404,13 +1415,13 @@ class Tools:
                 "Content-Type": "application/json",
             }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers) as resp:
-                    if resp.status >= 400:
-                        error_text = await resp.text()
-                        raise Exception(
-                            f"WhatsApp API error {resp.status}: {error_text}"
-                        )
+            session = await self._get_session()
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status >= 400:
+                    error_text = await resp.text()
+                    raise Exception(
+                        f"WhatsApp API error {resp.status}: {error_text}"
+                    )
 
             await emit(
                 {
@@ -1435,7 +1446,7 @@ class Tools:
         self,
         question: str,
         project_name: str = "",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Ask Envision OS a question about your construction projects. Access 390+ tools including Procore, Sage, Buildr, ClickUp, Rippling."""
@@ -1445,7 +1456,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1516,7 +1527,7 @@ class Tools:
         query: str,
         project_id: str = "",
         doc_type: str = "",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search construction documents (drawings, specs, RFIs, submittals) with AI-powered citations."""
@@ -1526,7 +1537,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1601,7 +1612,7 @@ class Tools:
         self,
         tool_name: str,
         arguments: str = "{}",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Call any Envision MCP tool by name. Use discover_envision_tools to find available tools. Arguments as JSON string."""
@@ -1611,7 +1622,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1689,7 +1700,7 @@ class Tools:
     async def discover_envision_tools(
         self,
         search: str = "",
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """List available Envision MCP tools. Optionally filter by search keyword. There are 390+ tools across Procore, Sage, Slack, Gmail, Drive, Zoom, ClickUp, Rippling, Buildr, and more."""
@@ -1699,7 +1710,7 @@ class Tools:
             async def emit(_: Any) -> None:
                 return None
 
-        _ = __user__
+        __user__ = __user__ or {}
         await emit(
             {
                 "type": "status",
@@ -1768,7 +1779,7 @@ class Tools:
                 "Please check your connection settings in Tool Settings."
             )
 
-    def _get_google_creds(self):
+    async def _get_google_creds(self) -> Any:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
@@ -1788,8 +1799,16 @@ class Tools:
         )
 
         if not creds.valid and creds.refresh_token:
-            creds.refresh(Request())
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: creds.refresh(Request()))
         return creds
+
+    async def _get_session(self):
+        if self._http_session is None or self._http_session.closed:
+            import aiohttp
+
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
 
     async def _mcp_request(self, method: str, params: dict = None) -> dict:
         import aiohttp
@@ -1807,38 +1826,49 @@ class Tools:
                 headers["Mcp-Session-Id"] = self._mcp_session_id
 
             timeout = aiohttp.ClientTimeout(total=120)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    self.valves.envision_mcp_url,
-                    json=payload,
-                    headers=headers,
-                ) as resp:
-                    if "Mcp-Session-Id" in resp.headers:
-                        self._mcp_session_id = resp.headers["Mcp-Session-Id"]
+            session = await self._get_session()
+            async with session.post(
+                self.valves.envision_mcp_url,
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            ) as resp:
+                if "Mcp-Session-Id" in resp.headers:
+                    self._mcp_session_id = resp.headers["Mcp-Session-Id"]
 
-                    content_type = resp.headers.get("Content-Type", "")
-                    if resp.status >= 400:
-                        return {"error": f"HTTP {resp.status}: {await resp.text()}"}
+                content_type = resp.headers.get("Content-Type", "")
+                if resp.status >= 400:
+                    return {"error": f"HTTP {resp.status}: {await resp.text()}"}
 
-                    if "text/event-stream" in content_type:
-                        body = await resp.text()
-                        result = None
-                        for line in body.split("\n"):
-                            line = line.strip()
-                            if line.startswith("data:"):
-                                data_str = line[5:].strip()
-                                if not data_str:
-                                    continue
-                                try:
-                                    result = json.loads(data_str)
-                                except json.JSONDecodeError:
-                                    continue
-                        return result or {"error": "No valid SSE data received"}
-
+                if "text/event-stream" in content_type:
+                    result = None
                     try:
-                        return await resp.json()
-                    except Exception:
-                        return {"error": "Invalid JSON response from MCP"}
+                        async with asyncio.timeout(30):
+                            async for line in resp.content:
+                                line = line.decode("utf-8", errors="replace").strip()
+                                if line.startswith("data:"):
+                                    data_str = line[5:].strip()
+                                    if data_str and data_str != "[DONE]":
+                                        try:
+                                            result = json.loads(data_str)
+                                        except json.JSONDecodeError:
+                                            pass
+                                elif not line.startswith(":") and line:
+                                    try:
+                                        result = json.loads(line)
+                                    except json.JSONDecodeError:
+                                        pass
+                    except TimeoutError:
+                        pass
+
+                    if result is None:
+                        return {"error": "No valid response from MCP server"}
+                    return result
+
+                try:
+                    return await resp.json()
+                except Exception:
+                    return {"error": "Invalid JSON response from MCP"}
 
         if not self._mcp_initialized and method not in (
             "initialize",
