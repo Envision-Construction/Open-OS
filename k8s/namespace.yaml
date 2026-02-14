@@ -4,8 +4,8 @@ metadata:
   name: openclaw
   labels:
     app.kubernetes.io/part-of: open-os
-    # Pod Security Standards — restricted
-    pod-security.kubernetes.io/enforce: restricted
+    # Pod Security Standards — baseline (Open WebUI needs root for static assets)
+    pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/audit-version: latest

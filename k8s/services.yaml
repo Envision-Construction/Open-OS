@@ -42,6 +42,8 @@ metadata:
   labels:
     app.kubernetes.io/name: open-webui
     app.kubernetes.io/part-of: open-os
+  annotations:
+    cloud.google.com/backend-config: '{"default": "openclaw-backend-config"}'
 spec:
   type: ClusterIP
   selector:

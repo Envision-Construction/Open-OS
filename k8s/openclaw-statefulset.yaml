@@ -1,5 +1,5 @@
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: openclaw
   namespace: openclaw
@@ -7,7 +7,6 @@ metadata:
     app.kubernetes.io/name: openclaw
     app.kubernetes.io/part-of: open-os
 spec:
-  serviceName: openclaw
   replicas: 1
   selector:
     matchLabels:
@@ -28,8 +27,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: openclaw
-          image: ghcr.io/open-webui/open-webui:latest  # OpenClaw gateway image
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest
+          args: ["--config", "/app/config.yaml", "--port", "11434"]
           ports:
             - containerPort: 11434
               name: api
@@ -52,59 +52,40 @@ spec:
                   name: openclaw-secrets
                   key: google-api-key
                   optional: true
-            - name: SLACK_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-secrets
-                  key: slack-bot-token
-                  optional: true
-            - name: SLACK_APP_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-secrets
-                  key: slack-app-token
-                  optional: true
-          envFrom:
-            - configMapRef:
-                name: openclaw-config
           volumeMounts:
-            - name: data
-              mountPath: /app/data
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
           resources:
             requests:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 100m
+              memory: 256Mi
             limits:
-              cpu: "2"
-              memory: 4Gi
+              cpu: "1"
+              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false  # OpenClaw needs writable /app/data
+            readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]
+          startupProbe:
+            tcpSocket:
+              port: api
+            failureThreshold: 60
+            periodSeconds: 5
           livenessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: api
-            initialDelaySeconds: 30
             periodSeconds: 30
-            timeoutSeconds: 5
           readinessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: api
-            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 3
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: standard-rwo
-        resources:
-          requests:
-            storage: 20Gi
+      volumes:
+        - name: config
+          configMap:
+            name: openclaw-config
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -112,12 +93,33 @@ metadata:
   name: openclaw-config
   namespace: openclaw
 data:
-  # Default LLM model
-  DEFAULT_MODEL: "claude-sonnet-4-5-20250514"
-  COMPLEX_MODEL: "claude-opus-4-6"
-  # Gateway port
-  PORT: "11434"
-  # Enable OpenAI-compatible API
-  ENABLE_OPENAI_API: "true"
-  # Data directory
-  DATA_DIR: "/app/data"
+  config.yaml: |
+    model_list:
+      - model_name: claude-sonnet-4-5
+        litellm_params:
+          model: anthropic/claude-sonnet-4-5-20250514
+          api_key: os.environ/ANTHROPIC_API_KEY
+
+      - model_name: claude-opus-4-6
+        litellm_params:
+          model: anthropic/claude-opus-4-6
+          api_key: os.environ/ANTHROPIC_API_KEY
+
+      - model_name: gpt-4o
+        litellm_params:
+          model: openai/gpt-4o
+          api_key: os.environ/OPENAI_API_KEY
+
+      - model_name: gemini-2.5-pro
+        litellm_params:
+          model: gemini/gemini-2.5-pro
+          api_key: os.environ/GOOGLE_API_KEY
+
+    litellm_settings:
+      drop_params: true
+      num_retries: 2
+      request_timeout: 120
+      set_verbose: false
+
+    general_settings:
+      master_key: null

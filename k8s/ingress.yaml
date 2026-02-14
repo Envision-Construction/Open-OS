@@ -13,7 +13,7 @@ metadata:
     app.kubernetes.io/part-of: open-os
   annotations:
     kubernetes.io/ingress.class: "gce"
-    kubernetes.io/ingress.global-static-ip-name: "openclaw-ip"
+    kubernetes.io/ingress.global-static-ip-name: "openclaw-static-ip"
     networking.gke.io/managed-certificates: "openclaw-cert"
     networking.gke.io/v1beta1.FrontendConfig: "openclaw-frontend"
 spec:
@@ -63,9 +63,10 @@ metadata:
   namespace: openclaw
 spec:
   iap:
-    enabled: true
-    oauthclientCredentials:
-      secretName: iap-oauth-secret
+    enabled: false
+    # TODO: Enable after creating OAuth consent screen + credentials in GCP Console
+    # oauthclientCredentials:
+    #   secretName: iap-oauth-secret
   healthCheck:
     checkIntervalSec: 15
     timeoutSec: 5
