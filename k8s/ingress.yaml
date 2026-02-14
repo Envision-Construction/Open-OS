@@ -1,0 +1,79 @@
+# Ingress with GCP Global External Application Load Balancer + IAP
+# Prerequisites:
+#   1. Static IP: gcloud compute addresses create openclaw-ip --global
+#   2. Managed cert: See ManagedCertificate below
+#   3. IAP OAuth: configured via BackendConfig
+#   4. Domain DNS A record pointing to the static IP
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open-webui-ingress
+  namespace: openclaw
+  labels:
+    app.kubernetes.io/part-of: open-os
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "openclaw-ip"
+    networking.gke.io/managed-certificates: "openclaw-cert"
+    networking.gke.io/v1beta1.FrontendConfig: "openclaw-frontend"
+spec:
+  defaultBackend:
+    service:
+      name: open-webui
+      port:
+        number: 8080
+  rules:
+    - host: "os.envsn.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: open-webui
+                port:
+                  number: 8080
+---
+# Google-managed TLS certificate
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: openclaw-cert
+  namespace: openclaw
+spec:
+  domains:
+    - "os.envsn.com"
+---
+# Frontend config — redirect HTTP to HTTPS
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: openclaw-frontend
+  namespace: openclaw
+spec:
+  redirectToHttps:
+    enabled: true
+    responseCodeName: MOVED_PERMANENTLY_DEFAULT
+---
+# Backend config — IAP zero-trust access
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: openclaw-backend-config
+  namespace: openclaw
+spec:
+  iap:
+    enabled: true
+    oauthclientCredentials:
+      secretName: iap-oauth-secret
+  healthCheck:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 8080
+  timeoutSec: 120
+  connectionDraining:
+    drainingTimeoutSec: 30

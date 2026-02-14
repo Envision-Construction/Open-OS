@@ -1,0 +1,23 @@
+# Secrets
+.env
+secrets/
+*.pem
+*.key
+*.json
+!.env.example
+!k8s/*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

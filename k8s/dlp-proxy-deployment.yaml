@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dlp-proxy
+  namespace: openclaw
+  labels:
+    app.kubernetes.io/name: dlp-proxy
+    app.kubernetes.io/part-of: open-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dlp-proxy
+  template:
+    metadata:
+      labels:
+        app: dlp-proxy
+        app.kubernetes.io/name: dlp-proxy
+    spec:
+      serviceAccountName: openclaw-sa
+      automountServiceAccountToken: true  # Needs Workload Identity for DLP API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534  # nobody
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dlp-proxy
+          image: us-central1-docker.pkg.dev/open-os-prod/openclaw/dlp-proxy:latest
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: OPENCLAW_UPSTREAM
+              value: "http://openclaw:11434"
+            - name: GCP_PROJECT_ID
+              value: "open-os-prod"
+            - name: DLP_MIN_LIKELIHOOD
+              value: "LIKELY"
+            - name: BLOCK_ON_FINDING
+              value: "false"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5

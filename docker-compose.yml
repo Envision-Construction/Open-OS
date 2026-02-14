@@ -1,0 +1,87 @@
+# Local development compose — mirrors the GKE architecture
+# Usage: docker compose up -d
+# Access: http://localhost:3000 (Open Web UI)
+
+services:
+  openclaw:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: openclaw
+    ports:
+      - "11434:11434"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - DEFAULT_MODEL=claude-sonnet-4-5-20250514
+      - ENABLE_OPENAI_API=true
+      - PORT=11434
+      - DATA_DIR=/app/data
+    volumes:
+      - openclaw-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  dlp-proxy:
+    build:
+      context: ./dlp-proxy
+      dockerfile: Dockerfile
+    container_name: dlp-proxy
+    ports:
+      - "8081:8080"
+    environment:
+      - OPENCLAW_UPSTREAM=http://openclaw:11434
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-open-os-prod}
+      - DLP_MIN_LIKELIHOOD=LIKELY
+      - BLOCK_ON_FINDING=false
+      - LOG_LEVEL=DEBUG
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-sa-key.json
+    volumes:
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-./secrets/gcp-sa-key.json}:/secrets/gcp-sa-key.json:ro
+    depends_on:
+      openclaw:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://dlp-proxy:8080/v1
+      - OPENAI_API_KEY=sk-placeholder
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
+      - ENABLE_SIGNUP=true  # Enable for local dev
+      - DEFAULT_USER_ROLE=admin
+      - WEBUI_AUTH=true
+      - ENABLE_RAG_WEB_SEARCH=false
+      - ENABLE_IMAGE_GENERATION=false
+    volumes:
+      - webui-data:/app/backend/data
+    depends_on:
+      dlp-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  openclaw-data:
+    driver: local
+  webui-data:
+    driver: local

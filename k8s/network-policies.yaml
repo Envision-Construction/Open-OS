@@ -1,0 +1,105 @@
+# ─── Default deny all ingress ──────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: openclaw
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+# ─── Open WebUI: allow ingress from GCP load balancer only ────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-webui
+  namespace: openclaw
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui
+  policyTypes:
+    - Ingress
+  ingress:
+    # GCP health checks and load balancer
+    - ports:
+        - port: 8080
+          protocol: TCP
+
+---
+# ─── DLP Proxy: allow ingress from Open WebUI only ───────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webui-to-dlp-proxy
+  namespace: openclaw
+spec:
+  podSelector:
+    matchLabels:
+      app: dlp-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: open-webui
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
+# ─── OpenClaw: allow ingress from DLP Proxy only ─────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dlp-proxy-to-openclaw
+  namespace: openclaw
+spec:
+  podSelector:
+    matchLabels:
+      app: openclaw
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: dlp-proxy
+      ports:
+        - port: 11434
+          protocol: TCP
+
+---
+# ─── Default deny all egress (optional, strict) ──────────────────────────────
+# Uncomment to enforce strict egress. Note: requires allowing DNS, DLP API, and LLM APIs.
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: default-deny-egress
+#   namespace: openclaw
+# spec:
+#   podSelector: {}
+#   policyTypes:
+#     - Egress
+
+---
+# ─── Allow DNS egress for all pods ───────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: openclaw
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
