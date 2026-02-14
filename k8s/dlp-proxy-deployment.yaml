@@ -43,6 +43,18 @@ spec:
               value: "false"
             - name: LOG_LEVEL
               value: "INFO"
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-secrets
+                  key: google-client-id
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-secrets
+                  key: google-client-secret
+            - name: OAUTH_REDIRECT_URI
+              value: "https://os.envsn.com/oauth/callback"
           resources:
             requests:
               cpu: 100m
@@ -53,6 +65,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: token-store
+              mountPath: /data/tokens
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -78,3 +92,6 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        - name: token-store
+          emptyDir:
+            sizeLimit: 32Mi

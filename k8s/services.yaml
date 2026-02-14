@@ -24,6 +24,8 @@ metadata:
   labels:
     app.kubernetes.io/name: dlp-proxy
     app.kubernetes.io/part-of: open-os
+  annotations:
+    cloud.google.com/backend-config: '{"default": "dlp-proxy-backend-config"}'
 spec:
   type: ClusterIP
   selector:

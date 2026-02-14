@@ -2,18 +2,26 @@
 
 Sits between Open Web UI and OpenClaw Gateway. Inspects user prompts on the way in
 and assistant responses on the way out. Redacts or blocks sensitive content.
+
+Also serves as the OAuth 2.0 callback handler for Google integrations.
+Users connect their Google account via /oauth/start → consent → /oauth/callback.
+Tokens are stored per-user in /data/tokens/.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import time
+import urllib.parse
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from google.cloud import dlp_v2
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -22,6 +30,16 @@ GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "open-os-prod")
 DLP_MIN_LIKELIHOOD = os.getenv("DLP_MIN_LIKELIHOOD", "LIKELY")
 BLOCK_ON_FINDING = os.getenv("BLOCK_ON_FINDING", "false").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# OAuth 2.0 config
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+OAUTH_REDIRECT_URI = os.getenv(
+    "OAUTH_REDIRECT_URI", "https://os.envsn.com/oauth/callback"
+)
+OAUTH_SCOPES = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly"
+TOKEN_STORE_DIR = Path(os.getenv("TOKEN_STORE_DIR", "/data/tokens"))
+TOKEN_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger("dlp-proxy")
@@ -137,9 +155,168 @@ def extract_messages_text(body: dict) -> str:
     return "\n".join(parts)
 
 
+# ─── OAuth 2.0 Token Store Helpers ─────────────────────────────────────────────
+
+
+def _token_path(user_id: str) -> Path:
+    safe_id = hashlib.sha256(user_id.encode()).hexdigest()[:16]
+    return TOKEN_STORE_DIR / f"{safe_id}.json"
+
+
+def load_user_tokens(user_id: str) -> dict | None:
+    path = _token_path(user_id)
+    if path.exists():
+        return json.loads(path.read_text())
+    return None
+
+
+def save_user_tokens(user_id: str, tokens: dict) -> None:
+    tokens["updated_at"] = time.time()
+    tokens["user_id"] = user_id
+    _token_path(user_id).write_text(json.dumps(tokens, indent=2))
+
+
+# ─── OAuth 2.0 Routes ─────────────────────────────────────────────────────────
+
+
+@app.get("/oauth/start")
+async def oauth_start(user_id: str = "default"):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured")
+
+    state = hashlib.sha256(f"{user_id}:{time.time()}".encode()).hexdigest()[:32]
+    state_path = TOKEN_STORE_DIR / f"state_{state}.json"
+    state_path.write_text(json.dumps({"user_id": user_id, "created": time.time()}))
+
+    params = urllib.parse.urlencode(
+        {
+            "client_id": GOOGLE_CLIENT_ID,
+            "redirect_uri": OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": OAUTH_SCOPES,
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state,
+        }
+    )
+    return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+
+@app.get("/oauth/callback")
+async def oauth_callback(code: str = "", state: str = "", error: str = ""):
+    if error:
+        return HTMLResponse(
+            f"<h2>Authorization failed</h2><p>{error}</p>", status_code=400
+        )
+
+    if not code or not state:
+        return HTMLResponse("<h2>Missing code or state</h2>", status_code=400)
+
+    state_path = TOKEN_STORE_DIR / f"state_{state}.json"
+    if not state_path.exists():
+        return HTMLResponse("<h2>Invalid or expired state</h2>", status_code=400)
+
+    state_data = json.loads(state_path.read_text())
+    state_path.unlink(missing_ok=True)
+    user_id = state_data.get("user_id", "default")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": OAUTH_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+
+    if resp.status_code != 200:
+        logger.error("Token exchange failed: %s", resp.text)
+        return HTMLResponse(
+            f"<h2>Token exchange failed</h2><pre>{resp.text}</pre>", status_code=500
+        )
+
+    tokens = resp.json()
+    save_user_tokens(
+        user_id,
+        {
+            "access_token": tokens.get("access_token"),
+            "refresh_token": tokens.get("refresh_token"),
+            "token_type": tokens.get("token_type"),
+            "expires_in": tokens.get("expires_in"),
+            "scope": tokens.get("scope"),
+        },
+    )
+
+    logger.info("OAuth tokens saved for user_id=%s", user_id)
+    return HTMLResponse("""
+    <html>
+    <head><style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-serif;
+               display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { text-align: center; padding: 3rem; border-radius: 16px;
+                background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); }
+        h2 { color: #4ade80; margin-bottom: 0.5rem; }
+        p { color: #9ca3af; }
+    </style></head>
+    <body><div class="card">
+        <h2>Google Account Connected</h2>
+        <p>You can close this tab and return to your chat.</p>
+        <p style="margin-top:2rem;font-size:0.85rem;color:#6b7280;">
+            Your Gmail, Calendar, and Drive tools are now active.</p>
+    </div></body></html>
+    """)
+
+
+@app.get("/oauth/tokens/{user_id}")
+async def get_tokens(user_id: str):
+    tokens = load_user_tokens(user_id)
+    if not tokens:
+        raise HTTPException(status_code=404, detail="No tokens for this user")
+    return {
+        "connected": True,
+        "scope": tokens.get("scope", ""),
+        "has_refresh_token": bool(tokens.get("refresh_token")),
+    }
+
+
+@app.get("/oauth/refresh/{user_id}")
+async def refresh_token(user_id: str):
+    tokens = load_user_tokens(user_id)
+    if not tokens or not tokens.get("refresh_token"):
+        raise HTTPException(status_code=404, detail="No refresh token")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": tokens["refresh_token"],
+                "grant_type": "refresh_token",
+            },
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Token refresh failed")
+
+    new_tokens = resp.json()
+    tokens["access_token"] = new_tokens.get("access_token")
+    tokens["expires_in"] = new_tokens.get("expires_in")
+    save_user_tokens(user_id, tokens)
+
+    return {"access_token": tokens["access_token"], "expires_in": tokens["expires_in"]}
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "dlp-proxy"}
+    return {
+        "status": "ok",
+        "service": "dlp-proxy",
+        "oauth_configured": bool(GOOGLE_CLIENT_ID),
+    }
 
 
 @app.post("/v1/chat/completions")

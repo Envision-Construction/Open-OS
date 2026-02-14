@@ -26,6 +26,13 @@ spec:
     - host: "os.envsn.com"
       http:
         paths:
+          - path: /oauth
+            pathType: Prefix
+            backend:
+              service:
+                name: dlp-proxy
+                port:
+                  number: 8080
           - path: /
             pathType: Prefix
             backend:

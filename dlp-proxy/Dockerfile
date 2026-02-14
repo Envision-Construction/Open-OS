@@ -7,7 +7,10 @@ RUN pip install --no-cache-dir \
     uvicorn[standard]==0.34.* \
     httpx==0.28.* \
     google-cloud-dlp==3.* \
+    google-auth==2.* \
     && rm -rf /root/.cache/pip
+
+RUN mkdir -p /data/tokens && chown nobody:nogroup /data/tokens
 
 COPY main.py .
 
