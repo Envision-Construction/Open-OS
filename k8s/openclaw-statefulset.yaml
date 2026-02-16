@@ -2,12 +2,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: openclaw
-  namespace: openclaw
+  namespace: open-os
   labels:
     app.kubernetes.io/name: openclaw
     app.kubernetes.io/part-of: open-os
 spec:
   replicas: 1
+  revisionHistoryLimit: 1
   selector:
     matchLabels:
       app: openclaw
@@ -38,18 +39,18 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-secrets
+                  name: openos-secrets
                   key: anthropic-api-key
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-secrets
+                  name: openos-secrets
                   key: openai-api-key
                   optional: true
             - name: GOOGLE_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-secrets
+                  name: openos-secrets
                   key: google-api-key
                   optional: true
           volumeMounts:
@@ -91,7 +92,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: openclaw-config
-  namespace: openclaw
+  namespace: open-os
 data:
   config.yaml: |
     model_list:

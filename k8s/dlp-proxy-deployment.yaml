@@ -2,12 +2,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dlp-proxy
-  namespace: openclaw
+  namespace: open-os
   labels:
     app.kubernetes.io/name: dlp-proxy
     app.kubernetes.io/part-of: open-os
 spec:
   replicas: 1
+  revisionHistoryLimit: 1
   selector:
     matchLabels:
       app: dlp-proxy
@@ -27,7 +28,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dlp-proxy
-          image: us-central1-docker.pkg.dev/open-os-prod/openclaw-registry/dlp-proxy:latest
+          image: docker.io/avireddy0/open-os-dlp-proxy:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: http
@@ -46,12 +48,12 @@ spec:
             - name: GOOGLE_CLIENT_ID
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-secrets
+                  name: openos-secrets
                   key: google-client-id
             - name: GOOGLE_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-secrets
+                  name: openos-secrets
                   key: google-client-secret
             - name: OAUTH_REDIRECT_URI
               value: "https://os.envsn.com/oauth/callback"

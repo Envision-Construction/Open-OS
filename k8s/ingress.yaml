@@ -8,12 +8,13 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: open-webui-ingress
-  namespace: openclaw
+  namespace: open-os
   labels:
     app.kubernetes.io/part-of: open-os
   annotations:
     kubernetes.io/ingress.class: "gce"
-    kubernetes.io/ingress.global-static-ip-name: "openclaw-static-ip"
+    # Static IP applied manually via forwarding rule swap (controller has a bug resolving IP names)
+    # kubernetes.io/ingress.global-static-ip-name: "openclaw-static-ip"
     networking.gke.io/managed-certificates: "openclaw-cert"
     networking.gke.io/v1beta1.FrontendConfig: "openclaw-frontend"
 spec:
@@ -46,7 +47,7 @@ apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
   name: openclaw-cert
-  namespace: openclaw
+  namespace: open-os
 spec:
   domains:
     - "os.envsn.com"
@@ -56,10 +57,10 @@ apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
   name: openclaw-frontend
-  namespace: openclaw
+  namespace: open-os
 spec:
   redirectToHttps:
-    enabled: true
+    enabled: false  # Temporarily disabled for ManagedCertificate provisioning (HTTP-01 ACME)
     responseCodeName: MOVED_PERMANENTLY_DEFAULT
 ---
 # Backend config — IAP zero-trust access
@@ -67,13 +68,34 @@ apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
   name: openclaw-backend-config
-  namespace: openclaw
+  namespace: open-os
 spec:
   iap:
     enabled: false
     # TODO: Enable after creating OAuth consent screen + credentials in GCP Console
     # oauthclientCredentials:
     #   secretName: iap-oauth-secret
+  healthCheck:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 8080
+  timeoutSec: 120
+  connectionDraining:
+    drainingTimeoutSec: 30
+
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: dlp-proxy-backend-config
+  namespace: open-os
+spec:
+  iap:
+    enabled: false
   healthCheck:
     checkIntervalSec: 15
     timeoutSec: 5
