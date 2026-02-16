@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_ID="${1:-open-os-prod}"
+REPO_ROOT="$REPO_ROOT"
 status=0
 
 ok() {
@@ -27,19 +28,19 @@ for secret in dockerhub-username dockerhub-token; do
   fi
 done
 
-if rg -q "mirror-to-dockerhub" /Users/avireddy/GitHub/Open-OS/cloudbuild.yaml; then
+if rg -q "mirror-to-dockerhub" $REPO_ROOT/cloudbuild.yaml; then
   ok "cloudbuild.yaml contains Docker Hub mirror step"
 else
   warn "cloudbuild.yaml missing Docker Hub mirror step"
 fi
 
-if rg -q "docker.io/avireddy0/open-os-dlp-proxy:latest" /Users/avireddy/GitHub/Open-OS/k8s/dlp-proxy-deployment.yaml; then
+if rg -q "docker.io/avireddy0/open-os-dlp-proxy:latest" $REPO_ROOT/k8s/dlp-proxy-deployment.yaml; then
   ok "k8s dlp-proxy image points to Docker Hub"
 else
   warn "k8s dlp-proxy image does not point to Docker Hub"
 fi
 
-if [[ -f /Users/avireddy/GitHub/Open-OS/.github/workflows/dockerhub-sync.yml ]]; then
+if [[ -f $REPO_ROOT/.github/workflows/dockerhub-sync.yml ]]; then
   ok "GitHub Actions Docker Hub sync workflow exists"
 else
   warn "GitHub Actions Docker Hub sync workflow is missing"

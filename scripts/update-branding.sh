@@ -38,5 +38,9 @@ kubectl create configmap branding-splash-dark \
   --from-file=splash-dark.png="$ASSETS_DIR/splash-dark.png" \
   -n "$NAMESPACE" $DRY_RUN -o yaml --dry-run=client | kubectl apply -f - $DRY_RUN
 
+kubectl create configmap branding-css \
+  --from-file=custom.css="$ASSETS_DIR/custom.css" \
+  -n "$NAMESPACE" $DRY_RUN -o yaml --dry-run=client | kubectl apply -f - $DRY_RUN
+
 echo "Done. Restart the open-webui pod to pick up changes:"
 echo "  kubectl rollout restart deployment/open-webui -n $NAMESPACE"
