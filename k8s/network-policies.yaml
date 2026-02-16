@@ -3,7 +3,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress
-  namespace: openclaw
+  namespace: open-os
 spec:
   podSelector: {}
   policyTypes:
@@ -15,7 +15,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-ingress-to-webui
-  namespace: openclaw
+  namespace: open-os
 spec:
   podSelector:
     matchLabels:
@@ -34,7 +34,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-webui-to-dlp-proxy
-  namespace: openclaw
+  namespace: open-os
 spec:
   podSelector:
     matchLabels:
@@ -51,12 +51,34 @@ spec:
           protocol: TCP
 
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gclb-healthchecks-to-dlp-proxy
+  namespace: open-os
+spec:
+  podSelector:
+    matchLabels:
+      app: dlp-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 35.191.0.0/16
+        - ipBlock:
+            cidr: 130.211.0.0/22
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
 # ─── OpenClaw: allow ingress from DLP Proxy only ─────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dlp-proxy-to-openclaw
-  namespace: openclaw
+  namespace: open-os
 spec:
   podSelector:
     matchLabels:
@@ -79,7 +101,7 @@ spec:
 # kind: NetworkPolicy
 # metadata:
 #   name: default-deny-egress
-#   namespace: openclaw
+#   namespace: open-os
 # spec:
 #   podSelector: {}
 #   policyTypes:
@@ -91,7 +113,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns-egress
-  namespace: openclaw
+  namespace: open-os
 spec:
   podSelector: {}
   policyTypes:
@@ -110,7 +132,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-external-https-egress
-  namespace: openclaw
+  namespace: open-os
 spec:
   podSelector:
     matchExpressions:
@@ -121,6 +143,85 @@ spec:
     - Egress
   egress:
     - ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+
+---
+# ─── Evolution API: allow ingress to Postgres ──────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-evolution-api-to-postgres
+  namespace: open-os
+spec:
+  podSelector:
+    matchLabels:
+      app: evolution-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: evolution-api
+      ports:
+        - port: 5432
+          protocol: TCP
+
+---
+# ─── Evolution API: allow ingress to Valkey ─────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-evolution-api-to-valkey
+  namespace: open-os
+spec:
+  podSelector:
+    matchLabels:
+      app: valkey
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: evolution-api
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+# ─── Evolution API: allow egress to Postgres, Valkey, and HTTPS ─────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-evolution-api-egress
+  namespace: open-os
+spec:
+  podSelector:
+    matchLabels:
+      app: evolution-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: evolution-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to: []
+      ports:
         - port: 443
           protocol: TCP
         - port: 80

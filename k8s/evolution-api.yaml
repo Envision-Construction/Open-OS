@@ -1,0 +1,264 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evolution-api
+  namespace: open-os
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: evolution-api
+  template:
+    metadata:
+      labels:
+        app: evolution-api
+    spec:
+      containers:
+        - name: evolution-api
+          image: atendai/evolution-api:latest
+          command: ["sh", "-c", "rm -f .env && npm run db:deploy && npm run db:generate && npm run start:prod"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AUTHENTICATION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openos-secrets
+                  key: evolution-api-key
+            - name: SERVER_URL
+              value: "https://os.envsn.com"
+            - name: SERVER_TYPE
+              value: "http"
+            - name: SERVER_PORT
+              value: "8080"
+            - name: CORS_ORIGIN
+              value: "*"
+            - name: CORS_METHODS
+              value: "POST,GET,PUT,DELETE"
+            - name: CORS_CREDENTIALS
+              value: "true"
+            - name: DATABASE_ENABLED
+              value: "true"
+            - name: DATABASE_PROVIDER
+              value: "postgresql"
+            - name: DATABASE_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: openos-secrets
+                  key: evolution-db-uri
+            - name: DATABASE_CONNECTION_CLIENT_NAME
+              value: "evolution_api"
+            - name: CACHE_REDIS_ENABLED
+              value: "true"
+            - name: CACHE_REDIS_URI
+              value: "redis://valkey:6379/6"
+            - name: CACHE_REDIS_PREFIX_KEY
+              value: "evolution"
+            - name: CACHE_REDIS_SAVE_INSTANCES
+              value: "false"
+            - name: CACHE_LOCAL_ENABLED
+              value: "false"
+            - name: CONFIG_SESSION_PHONE_CLIENT
+              value: "Envision OS"
+            - name: CONFIG_SESSION_PHONE_NAME
+              value: "Chrome"
+            - name: DEL_INSTANCE
+              value: "false"
+            - name: DEL_TEMP_INSTANCES
+              value: "true"
+            - name: LOG_LEVEL
+              value: "ERROR"
+          volumeMounts:
+            - name: instances
+              mountPath: /evolution/instances
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: instances
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evolution-api
+  namespace: open-os
+spec:
+  selector:
+    app: evolution-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  namespace: open-os
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:latest
+          command: ["valkey-server", "--save", "60", "1", "--loglevel", "warning"]
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "256Mi"
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: valkey-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: valkey-data
+  namespace: open-os
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: open-os
+spec:
+  selector:
+    app: valkey
+  ports:
+    - port: 6379
+      targetPort: 6379
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evolution-postgres
+  namespace: open-os
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: evolution-postgres
+  template:
+    metadata:
+      labels:
+        app: evolution-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "evolution"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openos-secrets
+                  key: evolution-db-password
+            - name: POSTGRES_DB
+              value: "evolution"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "evolution"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "evolution"]
+            periodSeconds: 30
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: evolution-pgdata
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: evolution-pgdata
+  namespace: open-os
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evolution-postgres
+  namespace: open-os
+spec:
+  selector:
+    app: evolution-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
