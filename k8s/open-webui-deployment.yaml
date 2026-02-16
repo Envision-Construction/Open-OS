@@ -35,6 +35,7 @@ spec:
                   - -c
                   - |
                     sed -i 's/>Open WebUI</>Envision OS</g' /app/build/index.html 2>/dev/null || true
+                    sed -i 's|</head>|<style>img#logo[alt="logo"]{display:none!important}.image.w-full.h-full.absolute{display:none!important}#auth-page>.bg-white{background:rgba(0,0,0,0.55)!important}html.dark #auth-page>.dark\\:bg-black{background:rgba(0,0,0,0.55)!important}</style></head>|' /app/build/index.html 2>/dev/null || true
           ports:
             - containerPort: 8080
               name: http
