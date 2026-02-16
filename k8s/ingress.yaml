@@ -15,7 +15,7 @@ metadata:
     kubernetes.io/ingress.class: "gce"
     # Static IP applied manually via forwarding rule swap (controller has a bug resolving IP names)
     # kubernetes.io/ingress.global-static-ip-name: "openclaw-static-ip"
-    networking.gke.io/managed-certificates: "openclaw-cert"
+    networking.gke.io/managed-certificates: "envsn-cert"
     networking.gke.io/v1beta1.FrontendConfig: "openclaw-frontend"
 spec:
   defaultBackend:
@@ -46,7 +46,7 @@ spec:
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
-  name: openclaw-cert
+  name: envsn-cert
   namespace: open-os
 spec:
   domains:

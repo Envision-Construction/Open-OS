@@ -27,15 +27,12 @@ spec:
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:main
-          lifecycle:
-            postStart:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - |
-                    sed -i 's/>Open WebUI</>Envision OS</g' /app/build/index.html 2>/dev/null || true
-                    sed -i 's|</head>|<style>img#logo[alt="logo"]{display:none!important}.image.w-full.h-full.absolute{display:none!important}#auth-page>.bg-white{background:rgba(0,0,0,0.55)!important}html.dark #auth-page>.dark\\:bg-black{background:rgba(0,0,0,0.55)!important}</style></head>|' /app/build/index.html 2>/dev/null || true
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sed -i 's/>Open WebUI</>Envision OS</g' /app/build/index.html 2>/dev/null || true
+              sed -i 's|</head>|<style>body{background:url(/static/background.jpg) center/cover no-repeat fixed #000!important}.image.w-full.h-full.absolute{display:none!important}#auth-page>.bg-white{background:rgba(0,0,0,0.55)!important}html.dark #auth-page>.dark\\:bg-black{background:rgba(0,0,0,0.55)!important}</style></head>|' /app/build/index.html 2>/dev/null || true
+              exec /app/backend/start.sh
           ports:
             - containerPort: 8080
               name: http
@@ -114,6 +111,10 @@ spec:
             - name: branding-favicon
               mountPath: /app/backend/open_webui/static/apple-touch-icon.png
               subPath: apple-touch-icon.png
+              readOnly: true
+            - name: branding-favicon
+              mountPath: /app/backend/open_webui/static/favicon-dark.png
+              subPath: favicon-dark.png
               readOnly: true
             - name: branding-css
               mountPath: /app/backend/open_webui/static/custom.css

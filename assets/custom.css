@@ -1,8 +1,3 @@
-/* Hide the default "OI" logo on the splash page */
-img#logo[alt="logo"] {
-  display: none !important;
-}
-
 /* Hide the rotating splash background images (adam.jpg, galaxy.jpg, etc.)
    so the body background.jpg shows through */
 .image.w-full.h-full.absolute {
