@@ -62,13 +62,23 @@ services:
       - OPENAI_API_BASE_URL=http://dlp-proxy:8080/v1
       - OPENAI_API_KEY=sk-placeholder
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
-      - ENABLE_SIGNUP=true  # Enable for local dev
+      - ENABLE_SIGNUP=false
       - DEFAULT_USER_ROLE=admin
-      - WEBUI_AUTH=true
+      - WEBUI_AUTH=false  # Bypass login for local dev
       - ENABLE_RAG_WEB_SEARCH=false
       - ENABLE_IMAGE_GENERATION=false
+      - WEBUI_NAME=Envision OS
     volumes:
       - webui-data:/app/backend/data
+      # Branding assets
+      - ./assets/logo.png:/app/backend/open_webui/static/logo.png:ro
+      - ./assets/favicon.png:/app/backend/open_webui/static/favicon.png:ro
+      - ./assets/favicon.ico:/app/backend/open_webui/static/favicon.ico:ro
+      - ./assets/favicon-96x96.png:/app/backend/open_webui/static/favicon-96x96.png:ro
+      - ./assets/apple-touch-icon.png:/app/backend/open_webui/static/apple-touch-icon.png:ro
+      - ./assets/background.jpg:/app/backend/open_webui/static/background.jpg:ro
+      - ./assets/splash.png:/app/backend/open_webui/static/splash.png:ro
+      - ./assets/splash-dark.png:/app/backend/open_webui/static/splash-dark.png:ro
     depends_on:
       dlp-proxy:
         condition: service_healthy
@@ -80,8 +90,91 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # --- Evolution API (WhatsApp) ---
+  evolution-api:
+    image: atendai/evolution-api:latest
+    container_name: evolution-api
+    ports:
+      - "8082:8080"
+    environment:
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-9BWkRg04MU6bX5SZqGeWz7pDlvn-nYG7CcMa4k8jpUE}
+      - SERVER_URL=${EVOLUTION_SERVER_URL:-http://localhost:8082}
+      - SERVER_TYPE=http
+      - SERVER_PORT=8080
+      - CORS_ORIGIN=*
+      - CORS_METHODS=POST,GET,PUT,DELETE
+      - CORS_CREDENTIALS=true
+      # Database (PostgreSQL)
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution_pass@evolution-postgres:5432/evolution?schema=public
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_api
+      # Cache (Valkey/Redis)
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://valkey:6379/6
+      - CACHE_REDIS_PREFIX_KEY=evolution
+      - CACHE_REDIS_SAVE_INSTANCES=false
+      - CACHE_LOCAL_ENABLED=false
+      # Session
+      - CONFIG_SESSION_PHONE_CLIENT=Envision OS
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - DEL_INSTANCE=false
+      - DEL_TEMP_INSTANCES=true
+      - LOG_LEVEL=ERROR
+    volumes:
+      - evolution-instances:/evolution/instances
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  evolution-postgres:
+    image: postgres:15-alpine
+    container_name: evolution-postgres
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution_pass
+      - POSTGRES_DB=evolution
+    volumes:
+      - evolution-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: valkey
+    command: valkey-server --save 60 1 --loglevel warning
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
 volumes:
   openclaw-data:
     driver: local
   webui-data:
+    driver: local
+  evolution-instances:
+    driver: local
+  evolution-pgdata:
+    driver: local
+  valkey-data:
     driver: local
