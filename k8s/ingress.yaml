@@ -60,7 +60,7 @@ metadata:
   namespace: open-os
 spec:
   redirectToHttps:
-    enabled: false  # Temporarily disabled for ManagedCertificate provisioning (HTTP-01 ACME)
+    enabled: true
     responseCodeName: MOVED_PERMANENTLY_DEFAULT
 ---
 # Backend config — IAP zero-trust access

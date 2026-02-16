@@ -14,10 +14,21 @@ spec:
       labels:
         app: evolution-api
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: evolution-api
           image: atendai/evolution-api:latest
           command: ["sh", "-c", "rm -f .env && npm run db:deploy && npm run db:generate && npm run start:prod"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
           env:
@@ -77,6 +88,7 @@ spec:
               cpu: "250m"
               memory: "512Mi"
             limits:
+              cpu: "2"
               memory: "1Gi"
           startupProbe:
             httpGet:
@@ -129,9 +141,20 @@ spec:
       labels:
         app: valkey
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: valkey
           image: valkey/valkey:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["valkey-server", "--save", "60", "1", "--loglevel", "warning"]
           ports:
             - containerPort: 6379
@@ -143,6 +166,7 @@ spec:
               cpu: "100m"
               memory: "128Mi"
             limits:
+              cpu: "500m"
               memory: "256Mi"
           readinessProbe:
             exec:
@@ -163,6 +187,7 @@ metadata:
   name: valkey-data
   namespace: open-os
 spec:
+  storageClassName: standard-rwo
   accessModes:
     - ReadWriteOnce
   resources:
@@ -200,9 +225,20 @@ spec:
       labels:
         app: evolution-postgres
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: postgres:15-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 5432
           env:
@@ -224,6 +260,7 @@ spec:
               cpu: "100m"
               memory: "256Mi"
             limits:
+              cpu: "1"
               memory: "512Mi"
           readinessProbe:
             exec:
@@ -244,11 +281,12 @@ metadata:
   name: evolution-pgdata
   namespace: open-os
 spec:
+  storageClassName: standard-rwo
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: 10Gi
 ---
 apiVersion: v1
 kind: Service
