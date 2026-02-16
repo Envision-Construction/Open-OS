@@ -1,0 +1,87 @@
+substitutions:
+  _REGION: us-central1
+  _PROJECT_ID: open-os-prod
+  _AR_REPO: openclaw-registry
+  _AR_IMAGE_NAME: dlp-proxy
+  _DOCKERHUB_REPO: open-os-dlp-proxy
+  _SYNC_DOCKERHUB_LATEST: "true"
+
+timeout: 1800s
+
+steps:
+  - id: build-dlp-proxy
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - dlp-proxy/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:latest
+      - dlp-proxy
+
+  - id: push-ar-short-sha
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:${SHORT_SHA}
+
+  - id: push-ar-latest
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:latest
+
+  - id: load-dockerhub-secrets
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        if ! gcloud secrets describe dockerhub-username --project="${_PROJECT_ID}" >/dev/null 2>&1; then
+          echo "dockerhub-username secret not found in ${_PROJECT_ID}; skipping Docker Hub mirror"
+          touch /workspace/dockerhub_mirror_skip
+          exit 0
+        fi
+        if ! gcloud secrets describe dockerhub-token --project="${_PROJECT_ID}" >/dev/null 2>&1; then
+          echo "dockerhub-token secret not found in ${_PROJECT_ID}; skipping Docker Hub mirror"
+          touch /workspace/dockerhub_mirror_skip
+          exit 0
+        fi
+
+        gcloud secrets versions access latest --project="${_PROJECT_ID}" --secret=dockerhub-username > /workspace/dockerhub_username
+        gcloud secrets versions access latest --project="${_PROJECT_ID}" --secret=dockerhub-token > /workspace/dockerhub_token
+
+  - id: mirror-to-dockerhub
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        if [[ -f /workspace/dockerhub_mirror_skip ]]; then
+          echo "Docker Hub mirror skipped"
+          exit 0
+        fi
+
+        DOCKERHUB_USERNAME="$(cat /workspace/dockerhub_username)"
+        DOCKERHUB_TOKEN="$(cat /workspace/dockerhub_token)"
+        SRC_IMAGE="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:${SHORT_SHA}"
+        DST_IMAGE_SHA="docker.io/$${DOCKERHUB_USERNAME}/${_DOCKERHUB_REPO}:${SHORT_SHA}"
+        DST_IMAGE_LATEST="docker.io/$${DOCKERHUB_USERNAME}/${_DOCKERHUB_REPO}:latest"
+
+        echo "$${DOCKERHUB_TOKEN}" | docker login --username "$${DOCKERHUB_USERNAME}" --password-stdin
+        docker pull "$${SRC_IMAGE}"
+        docker tag "$${SRC_IMAGE}" "$${DST_IMAGE_SHA}"
+        docker push "$${DST_IMAGE_SHA}"
+
+        if [[ "${_SYNC_DOCKERHUB_LATEST}" == "true" ]]; then
+          docker tag "$${SRC_IMAGE}" "$${DST_IMAGE_LATEST}"
+          docker push "$${DST_IMAGE_LATEST}"
+        fi
+
+        docker logout || true
+
+images:
+  - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_AR_IMAGE_NAME}:latest

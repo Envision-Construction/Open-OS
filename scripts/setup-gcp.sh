@@ -32,6 +32,7 @@ gcloud services enable \
   iap.googleapis.com \
   logging.googleapis.com \
   monitoring.googleapis.com \
+  cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   compute.googleapis.com
 

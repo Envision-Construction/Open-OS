@@ -83,11 +83,15 @@ helm repo add external-secrets https://charts.external-secrets.io
 helm install external-secrets external-secrets/external-secrets \
   -n external-secrets --create-namespace
 
-# 5. Build and push DLP proxy
-gcloud builds submit dlp-proxy/ \
-  --tag us-central1-docker.pkg.dev/open-os-prod/openclaw/dlp-proxy:latest
+# 5. Bootstrap Docker Hub secrets (one-time)
+DOCKERHUB_USERNAME='your-user' DOCKERHUB_TOKEN='your-token' \
+  ./scripts/bootstrap-dockerhub-gcp-secrets.sh open-os-prod
 
-# 6. Deploy to GKE
+# 6. Build once, then mirror to both Artifact Registry + Docker Hub
+gcloud services enable cloudbuild.googleapis.com --project open-os-prod
+gcloud builds submit --project open-os-prod --config cloudbuild.yaml .
+
+# 7. Deploy to GKE
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/secrets-external.yaml
 kubectl apply -f k8s/openclaw-statefulset.yaml
@@ -96,8 +100,22 @@ kubectl apply -f k8s/open-webui-deployment.yaml
 kubectl apply -f k8s/services.yaml
 kubectl apply -f k8s/network-policies.yaml
 
-# 7. Set up ingress (after DNS is configured)
+# 8. Set up ingress (after DNS is configured)
 kubectl apply -f k8s/ingress.yaml
+```
+
+### Docker Hub Sync
+
+- `cloudbuild.yaml` builds `dlp-proxy` once and pushes:
+  - `us-central1-docker.pkg.dev/open-os-prod/openclaw-registry/dlp-proxy:{SHORT_SHA,latest}`
+  - `docker.io/<dockerhub-username>/open-os-dlp-proxy:{SHORT_SHA,latest}`
+- `.github/workflows/dockerhub-sync.yml` keeps Docker Hub updated on every push to `main`.
+  - Configure GitHub repo secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+- `k8s/dlp-proxy-deployment.yaml` pulls from Docker Hub (`docker.io/avireddy0/open-os-dlp-proxy:latest`).
+- Verify sync wiring anytime:
+
+```bash
+./scripts/verify-dockerhub-gcp-sync.sh open-os-prod
 ```
 
 ### DNS Setup
@@ -155,7 +173,10 @@ Open-OS/
 │   └── secrets-external.yaml # ExternalSecret CRDs
 ├── scripts/
 │   ├── setup-gcp.sh          # Infrastructure provisioning
-│   └── setup-oauth.sh        # OAuth credential setup
+│   ├── setup-oauth.sh        # OAuth credential setup
+│   ├── bootstrap-dockerhub-gcp-secrets.sh
+│   └── verify-dockerhub-gcp-sync.sh
+├── cloudbuild.yaml           # Build once -> push to AR + mirror to Docker Hub
 ├── docker-compose.yml        # Local development
 └── README.md
 ```
