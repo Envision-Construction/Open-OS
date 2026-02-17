@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dlp-proxy
-          image: docker.io/avireddy0/open-os-dlp-proxy:v2.1
+          image: docker.io/avireddy0/open-os-dlp-proxy:v2.2.1
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
