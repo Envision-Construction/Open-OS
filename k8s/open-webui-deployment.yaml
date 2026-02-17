@@ -32,6 +32,7 @@ spec:
             - |
               sed -i 's/>Open WebUI</>Envision OS</g' /app/build/index.html 2>/dev/null || true
               sed -i 's|</head>|<style>body{background:url(/static/background.jpg) center/cover no-repeat fixed #000!important}.image.w-full.h-full.absolute{display:none!important}#auth-page>.bg-white{background:rgba(0,0,0,0.55)!important}html.dark #auth-page>.dark\\:bg-black{background:rgba(0,0,0,0.55)!important}</style></head>|' /app/build/index.html 2>/dev/null || true
+              sed -i 's|</head>|<script src="/static/onboarding.js" defer></script></head>|' /app/build/index.html 2>/dev/null || true
               exec /app/backend/start.sh
           ports:
             - containerPort: 8080
@@ -128,6 +129,10 @@ spec:
               mountPath: /app/backend/open_webui/static/splash-dark.png
               subPath: splash-dark.png
               readOnly: true
+            - name: branding-onboarding-js
+              mountPath: /app/backend/open_webui/static/onboarding.js
+              subPath: onboarding.js
+              readOnly: true
           resources:
             requests:
               cpu: 250m
@@ -176,6 +181,9 @@ spec:
         - name: branding-splash-dark
           configMap:
             name: branding-splash-dark
+        - name: branding-onboarding-js
+          configMap:
+            name: branding-onboarding-js
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
