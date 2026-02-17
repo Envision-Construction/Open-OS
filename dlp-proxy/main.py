@@ -39,12 +39,12 @@ OAUTH_REDIRECT_URI = os.getenv(
 )
 GOOGLE_SCOPES = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly"
 
-# OAuth 2.0 config — Slack
+# OAuth 2.0 config — Slack (personal user token, not workspace bot)
 SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
 SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
-SLACK_SCOPES = os.getenv(
-    "SLACK_SCOPES",
-    "channels:read,channels:history,chat:write,users:read,files:read",
+SLACK_USER_SCOPES = os.getenv(
+    "SLACK_USER_SCOPES",
+    "channels:read,channels:history,chat:write,users:read,files:read,search:read",
 )
 
 # WhatsApp — Evolution API
@@ -207,7 +207,7 @@ def _create_state(user_id: str, provider: str) -> str:
 
 @app.get("/oauth/start")
 async def oauth_start(user_id: str = "default", provider: str = "google"):
-    # ── Slack OAuth ───────────────────────────────────────────────────
+    # ── Slack OAuth (personal user token) ────────────────────────────
     if provider == "slack":
         if not SLACK_CLIENT_ID:
             raise HTTPException(status_code=500, detail="SLACK_CLIENT_ID not configured")
@@ -215,8 +215,7 @@ async def oauth_start(user_id: str = "default", provider: str = "google"):
         params = urllib.parse.urlencode(
             {
                 "client_id": SLACK_CLIENT_ID,
-                "redirect_uri": OAUTH_REDIRECT_URI,
-                "scope": SLACK_SCOPES,
+                "user_scope": SLACK_USER_SCOPES,
                 "state": state,
             }
         )
@@ -281,7 +280,7 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
     user_id = state_data.get("user_id", "default")
     provider = state_data.get("provider", "google")
 
-    # ── Slack token exchange ──────────────────────────────────────────
+    # ── Slack token exchange (personal user token) ─────────────────────
     if provider == "slack":
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -290,7 +289,6 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
                     "code": code,
                     "client_id": SLACK_CLIENT_ID,
                     "client_secret": SLACK_CLIENT_SECRET,
-                    "redirect_uri": OAUTH_REDIRECT_URI,
                 },
             )
 
@@ -306,25 +304,27 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
                 status_code=400,
             )
 
+        # Personal connection: user token is the primary token
         authed_user = data.get("authed_user", {})
+        user_token = authed_user.get("access_token", "")
         save_user_tokens(
             user_id,
             {
-                "access_token": data.get("access_token", ""),
-                "bot_token": data.get("access_token", ""),
-                "user_token": authed_user.get("access_token", ""),
+                "access_token": user_token,
+                "bot_token": user_token,
+                "user_token": user_token,
                 "team_id": data.get("team", {}).get("id", ""),
                 "team_name": data.get("team", {}).get("name", ""),
-                "scope": data.get("scope", ""),
+                "scope": authed_user.get("scope", ""),
                 "user_scope": authed_user.get("scope", ""),
             },
             provider="slack",
         )
-        logger.info("Slack tokens saved for user_id=%s", user_id)
+        logger.info("Slack user token saved for user_id=%s", user_id)
         return HTMLResponse(
             _SUCCESS_HTML.format(
                 title="Slack Connected",
-                detail="Your Slack workspace is now linked.",
+                detail="Your personal Slack account is now linked.",
             )
         )
 
@@ -450,8 +450,11 @@ async def _whatsapp_connect(user_id: str):
     instance_name = _wa_instance_name(user_id)
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
 
+    qr_base64 = ""
+    qr_code = ""
+
     async with httpx.AsyncClient(base_url=EVOLUTION_API_URL, timeout=30.0) as client:
-        # Try to create instance (idempotent — returns existing if already created)
+        # Try to create instance — returns QR in response if qrcode=True
         create_resp = await client.post(
             "/instance/create",
             json={
@@ -463,22 +466,31 @@ async def _whatsapp_connect(user_id: str):
         )
         logger.info("Evolution create instance %s: %s", instance_name, create_resp.status_code)
 
-        # Fetch QR code
-        qr_resp = await client.get(
-            f"/instance/connect/{instance_name}",
-            headers=headers,
-        )
+        if create_resp.status_code in (200, 201):
+            create_data = create_resp.json()
+            # QR comes nested under qrcode.base64 in create response
+            qr_obj = create_data.get("qrcode", {})
+            if isinstance(qr_obj, dict):
+                qr_base64 = qr_obj.get("base64", "")
+                qr_code = qr_obj.get("code", "")
 
-    if qr_resp.status_code != 200:
-        logger.error("Evolution QR fetch failed: %s", qr_resp.text)
+        # Fall back to connect endpoint if create didn't return a QR
+        if not qr_base64:
+            qr_resp = await client.get(
+                f"/instance/connect/{instance_name}",
+                headers=headers,
+            )
+            if qr_resp.status_code == 200:
+                qr_data = qr_resp.json()
+                qr_base64 = qr_data.get("base64", "")
+                qr_code = qr_data.get("code", "")
+
+    if not qr_base64:
+        logger.error("Evolution QR not available for %s", instance_name)
         return HTMLResponse(
-            "<h2>WhatsApp connection failed</h2><p>Could not generate QR code.</p>",
+            "<h2>WhatsApp connection failed</h2><p>Could not generate QR code. Try again.</p>",
             status_code=500,
         )
-
-    qr_data = qr_resp.json()
-    qr_base64 = qr_data.get("base64", "")
-    qr_code = qr_data.get("code", "")
 
     # Render a page with the QR code that auto-polls for connection
     return HTMLResponse(f"""

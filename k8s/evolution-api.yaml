@@ -59,7 +59,7 @@ spec:
             - name: CACHE_REDIS_PREFIX_KEY
               value: "evolution"
             - name: CACHE_REDIS_SAVE_INSTANCES
-              value: "false"
+              value: "true"
             - name: CACHE_LOCAL_ENABLED
               value: "false"
             - name: CONFIG_SESSION_PHONE_CLIENT

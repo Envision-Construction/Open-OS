@@ -3,7 +3,7 @@ title: Slack
 author: Avi Reddy
 version: 0.1.0
 license: MIT
-description: Send, search, and read Slack messages using Bot Token
+description: Send, search, and read Slack messages using personal user token
 required_pip_packages: slack_sdk aiohttp
 """
 
