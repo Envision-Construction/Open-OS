@@ -1,295 +1,278 @@
 """
 title: WhatsApp
 author: Avi Reddy
-version: 0.1.0
+version: 0.2.0
 license: MIT
-description: Send and read WhatsApp messages using the WhatsApp Cloud API
+description: Send and read WhatsApp messages via Evolution API (personal WhatsApp)
 required_pip_packages: aiohttp
 """
 
 from __future__ import annotations
 
-import re
 from pydantic import BaseModel
 
 
 class Tools:
-    API_BASE = "https://graph.facebook.com/v21.0"
-
     class Valves(BaseModel):
-        whatsapp_access_token: str = ""
-        whatsapp_phone_number_id: str = ""
-        whatsapp_business_account_id: str = ""
+        evolution_api_url: str = "http://evolution-api:8080"
+        evolution_api_key: str = ""
+        evolution_instance: str = ""
+        dlp_proxy_url: str = "http://dlp-proxy:8080"
 
     def __init__(self) -> None:
         self.valves = self.Valves()
+
+    def _headers(self) -> dict:
+        return {
+            "apikey": self.valves.evolution_api_key,
+            "Content-Type": "application/json",
+        }
+
+    def _instance(self) -> str:
+        return self.valves.evolution_instance
+
+    async def _ensure_config(self, __user__: dict = None) -> str | None:
+        """Try to load config from DLP proxy token store if valves are empty."""
+        if self.valves.evolution_api_key and self.valves.evolution_instance:
+            return None
+
+        if not __user__:
+            return "WhatsApp not configured. Set evolution_api_key and evolution_instance in tool settings."
+
+        user_id = __user__.get("id") or __user__.get("sub") or ""
+        if not user_id:
+            return "Cannot determine user ID for WhatsApp config lookup."
+
+        import aiohttp
+
+        try:
+            url = f"{self.valves.dlp_proxy_url}/oauth/tokens/{user_id}/full?provider=whatsapp"
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        return "WhatsApp not connected. Use the Connect panel to link your WhatsApp."
+                    data = await resp.json()
+                    self.valves.evolution_api_url = data.get("evolution_api_url", self.valves.evolution_api_url)
+                    self.valves.evolution_api_key = data.get("evolution_api_key", "")
+                    self.valves.evolution_instance = data.get("instance_name", "")
+        except Exception:
+            return "Could not reach DLP proxy to load WhatsApp config."
+
+        if not self.valves.evolution_api_key or not self.valves.evolution_instance:
+            return "WhatsApp not connected. Use the Connect panel to link your WhatsApp."
+        return None
 
     async def send_message(
         self,
         to: str,
         message: str,
-        __user__: dict,
-        __event_emitter__,
-    ) -> str:
-        user_label = self._user_label(__user__)
-        await self._emit_status(
-            __event_emitter__,
-            f"Sending WhatsApp message{user_label}...",
-            status="in_progress",
-        )
-
-        missing = self._missing_config(
-            ["whatsapp_access_token", "whatsapp_phone_number_id"]
-        )
-        if missing:
-            error_message = f"Missing configuration: {', '.join(missing)}"
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        cleaned_to = self._normalize_phone_number(to)
-        if not cleaned_to:
-            error_message = "Invalid phone number. Provide an international format like +15551234567."
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        url = f"{self.API_BASE}/{self.valves.whatsapp_phone_number_id}/messages"
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": cleaned_to,
-            "type": "text",
-            "text": {"body": message},
-        }
-
-        status_code, data = await self._request("POST", url, payload)
-        if status_code is None:
-            error_message = "WhatsApp API request failed. Please try again later."
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        if status_code >= 400:
-            error_message = self._format_error(status_code, data)
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        message_id = self._extract_message_id(data)
-        await self._emit_status(
-            __event_emitter__, "WhatsApp message sent.", status="complete"
-        )
-        if message_id:
-            return f"WhatsApp message sent successfully. Message ID: {message_id}"
-        return "WhatsApp message sent successfully."
-
-    async def send_template_message(
-        self,
-        to: str,
-        template_name: str,
-        language_code: str = "en_US",
         __user__: dict = None,
         __event_emitter__=None,
     ) -> str:
-        user_label = self._user_label(__user__ or {})
-        await self._emit_status(
-            __event_emitter__,
-            f"Sending WhatsApp template{user_label}...",
-            status="in_progress",
+        """Send a WhatsApp message to a phone number. Use international format like 15551234567."""
+        await self._emit(
+            __event_emitter__, f"Sending WhatsApp message to {to}...", "in_progress"
         )
 
-        missing = self._missing_config(
-            ["whatsapp_access_token", "whatsapp_phone_number_id"]
-        )
-        if missing:
-            error_message = f"Missing configuration: {', '.join(missing)}"
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
+        err = await self._ensure_config(__user__)
+        if err:
+            await self._emit(__event_emitter__, err, "error")
+            return err
 
-        cleaned_to = self._normalize_phone_number(to)
-        if not cleaned_to:
-            error_message = "Invalid phone number. Provide an international format like +15551234567."
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        url = f"{self.API_BASE}/{self.valves.whatsapp_phone_number_id}/messages"
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": cleaned_to,
-            "type": "template",
-            "template": {
-                "name": template_name,
-                "language": {"code": language_code},
-            },
-        }
-
-        status_code, data = await self._request("POST", url, payload)
-        if status_code is None:
-            error_message = "WhatsApp API request failed. Please try again later."
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        if status_code >= 400:
-            error_message = self._format_error(status_code, data)
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        message_id = self._extract_message_id(data)
-        await self._emit_status(
-            __event_emitter__, "WhatsApp template sent.", status="complete"
-        )
-        if message_id:
-            return f"WhatsApp template sent successfully. Message ID: {message_id}"
-        return "WhatsApp template sent successfully."
-
-    async def get_message_templates(
-        self,
-        __user__: dict,
-        __event_emitter__,
-    ) -> str:
-        user_label = self._user_label(__user__)
-        await self._emit_status(
-            __event_emitter__,
-            f"Fetching WhatsApp templates{user_label}...",
-            status="in_progress",
-        )
-
-        missing = self._missing_config(
-            ["whatsapp_access_token", "whatsapp_business_account_id"]
-        )
-        if missing:
-            error_message = f"Missing configuration: {', '.join(missing)}"
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        url = (
-            f"{self.API_BASE}/{self.valves.whatsapp_business_account_id}"
-            "/message_templates"
-        )
-
-        status_code, data = await self._request("GET", url, None)
-        if status_code is None:
-            error_message = "WhatsApp API request failed. Please try again later."
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        if status_code >= 400:
-            error_message = self._format_error(status_code, data)
-            await self._emit_status(__event_emitter__, error_message, status="error")
-            return error_message
-
-        templates = data.get("data", []) if isinstance(data, dict) else []
-        if not templates:
-            await self._emit_status(
-                __event_emitter__, "No WhatsApp templates found.", status="complete"
-            )
-            return "No WhatsApp templates found."
-
-        lines = ["Available WhatsApp templates:"]
-        for template in templates:
-            name = template.get("name", "unknown")
-            language = template.get("language", "unknown")
-            category = template.get("category", "unknown")
-            status = template.get("status", "unknown")
-            lines.append(f"- {name} ({language}) | {category} | {status}")
-
-        await self._emit_status(
-            __event_emitter__, "WhatsApp templates retrieved.", status="complete"
-        )
-        return "\n".join(lines)
-
-    async def _request(
-        self, method: str, url: str, payload: dict | None
-    ) -> tuple[int | None, dict | None]:
-        headers = {
-            "Authorization": f"Bearer {self.valves.whatsapp_access_token}",
-            "Content-Type": "application/json",
-        }
         import aiohttp
 
-        timeout = aiohttp.ClientTimeout(total=30)
+        url = f"{self.valves.evolution_api_url}/message/sendText/{self._instance()}"
+        # Strip + prefix — Evolution API expects bare number with country code
+        number = to.strip().lstrip("+")
+        payload = {
+            "number": number,
+            "text": message,
+        }
 
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.request(
-                    method, url, json=payload, headers=headers
-                ) as response:
-                    data = await self._read_json(response)
-                    return response.status, data
-        except aiohttp.ClientError:
-            return None, None
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.post(url, json=payload, headers=self._headers()) as resp:
+                    data = await resp.json(content_type=None)
+                    if resp.status >= 400:
+                        error_msg = data.get("message", [data]) if isinstance(data, dict) else str(data)
+                        msg = f"Evolution API error ({resp.status}): {error_msg}"
+                        await self._emit(__event_emitter__, msg, "error")
+                        return msg
 
-    async def _read_json(self, response) -> dict | None:
+            await self._emit(__event_emitter__, "WhatsApp message sent.", "complete")
+            msg_key = data.get("key", {}).get("id", "") if isinstance(data, dict) else ""
+            if msg_key:
+                return f"WhatsApp message sent. ID: {msg_key}"
+            return "WhatsApp message sent successfully."
+        except Exception as exc:
+            msg = f"Failed to send WhatsApp message: {exc}"
+            await self._emit(__event_emitter__, msg, "error")
+            return msg
+
+    async def get_contacts(
+        self,
+        __user__: dict = None,
+        __event_emitter__=None,
+    ) -> str:
+        """List all WhatsApp contacts."""
+        await self._emit(__event_emitter__, "Fetching WhatsApp contacts...", "in_progress")
+
+        err = await self._ensure_config(__user__)
+        if err:
+            await self._emit(__event_emitter__, err, "error")
+            return err
+
+        import aiohttp
+
+        url = f"{self.valves.evolution_api_url}/chat/contacts/{self._instance()}"
+
         try:
-            return await response.json(content_type=None)
-        except (ValueError, Exception):
-            text = await response.text()
-            return {"raw": text}
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.get(url, headers=self._headers()) as resp:
+                    data = await resp.json(content_type=None)
+                    if resp.status >= 400:
+                        msg = f"Evolution API error ({resp.status}): {data}"
+                        await self._emit(__event_emitter__, msg, "error")
+                        return msg
 
-    def _format_error(self, status_code: int, data: dict | None) -> str:
-        if not isinstance(data, dict):
-            return f"WhatsApp API error (HTTP {status_code})."
+            if not data or not isinstance(data, list):
+                await self._emit(__event_emitter__, "No contacts found.", "complete")
+                return "No contacts found."
 
-        error = data.get("error") if isinstance(data.get("error"), dict) else {}
-        message = error.get("message") or data.get("message") or "Unknown error"
-        error_type = error.get("type")
-        code = error.get("code")
-        subcode = error.get("error_subcode")
-        trace_id = error.get("fbtrace_id")
+            lines = [f"WhatsApp contacts ({len(data)}):"]
+            for contact in data[:100]:  # Cap at 100 for readability
+                name = contact.get("pushName") or contact.get("name") or "Unknown"
+                jid = contact.get("id") or contact.get("jid") or ""
+                # Extract phone number from JID (format: 15551234567@s.whatsapp.net)
+                number = jid.split("@")[0] if "@" in jid else jid
+                lines.append(f"- {name}: +{number}")
 
-        parts = [f"WhatsApp API error (HTTP {status_code})", message]
-        if error_type:
-            parts.append(f"type={error_type}")
-        if code:
-            parts.append(f"code={code}")
-        if subcode:
-            parts.append(f"subcode={subcode}")
-        if trace_id:
-            parts.append(f"trace={trace_id}")
-        return " | ".join(parts)
+            await self._emit(
+                __event_emitter__, f"Found {len(data)} contacts.", "complete"
+            )
+            return "\n".join(lines)
+        except Exception as exc:
+            msg = f"Failed to fetch contacts: {exc}"
+            await self._emit(__event_emitter__, msg, "error")
+            return msg
 
-    def _normalize_phone_number(self, to: str) -> str:
-        cleaned = re.sub(r"[\s\-()]", "", to or "").strip()
-        if cleaned.startswith("00"):
-            cleaned = f"+{cleaned[2:]}"
-        elif cleaned and not cleaned.startswith("+"):
-            cleaned = f"+{cleaned}"
+    async def get_chat_history(
+        self,
+        contact_number: str,
+        count: int = 20,
+        __user__: dict = None,
+        __event_emitter__=None,
+    ) -> str:
+        """Get message history with a WhatsApp contact. Provide phone number in international format (e.g. 15551234567)."""
+        await self._emit(
+            __event_emitter__,
+            f"Fetching chat history with {contact_number}...",
+            "in_progress",
+        )
 
-        digits = cleaned[1:] if cleaned.startswith("+") else cleaned
-        if not digits.isdigit():
-            return ""
-        return cleaned
+        err = await self._ensure_config(__user__)
+        if err:
+            await self._emit(__event_emitter__, err, "error")
+            return err
 
-    def _missing_config(self, fields: list[str]) -> list[str]:
-        missing = []
-        for field in fields:
-            if not getattr(self.valves, field, None):
-                missing.append(field)
-        return missing
+        import aiohttp
 
-    def _extract_message_id(self, data: dict | None) -> str | None:
-        if not isinstance(data, dict):
-            return None
-        messages = data.get("messages")
-        if isinstance(messages, list) and messages:
-            message_id = messages[0].get("id")
-            if isinstance(message_id, str):
-                return message_id
-        return None
+        number = contact_number.strip().lstrip("+")
+        jid = f"{number}@s.whatsapp.net"
+        url = f"{self.valves.evolution_api_url}/chat/findMessages/{self._instance()}"
+        payload = {
+            "where": {"key": {"remoteJid": jid}},
+            "limit": count,
+        }
 
-    def _user_label(self, user: dict) -> str:
-        name = (user or {}).get("name") or (user or {}).get("username")
-        if not name:
-            return ""
-        return f" for {name}"
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.post(url, json=payload, headers=self._headers()) as resp:
+                    data = await resp.json(content_type=None)
+                    if resp.status >= 400:
+                        msg = f"Evolution API error ({resp.status}): {data}"
+                        await self._emit(__event_emitter__, msg, "error")
+                        return msg
 
-    async def _emit_status(
-        self, event_emitter, description: str, status: str = "in_progress"
-    ) -> None:
-        if not event_emitter:
+            messages = data if isinstance(data, list) else data.get("messages", data.get("data", []))
+            if not messages:
+                await self._emit(__event_emitter__, "No messages found.", "complete")
+                return "No messages found."
+
+            lines = [f"Chat history with +{number} ({len(messages)} messages):"]
+            for msg in messages:
+                key = msg.get("key", {})
+                from_me = key.get("fromMe", False)
+                sender = "You" if from_me else f"+{number}"
+                text = (msg.get("message", {}) or {}).get("conversation") or \
+                       (msg.get("message", {}) or {}).get("extendedTextMessage", {}).get("text") or \
+                       "[media/other]"
+                ts = msg.get("messageTimestamp", "")
+                lines.append(f"[{ts}] {sender}: {text}")
+
+            await self._emit(
+                __event_emitter__,
+                f"Loaded {len(messages)} messages.",
+                "complete",
+            )
+            return "\n".join(lines)
+        except Exception as exc:
+            msg = f"Failed to fetch chat history: {exc}"
+            await self._emit(__event_emitter__, msg, "error")
+            return msg
+
+    async def list_chats(
+        self,
+        __user__: dict = None,
+        __event_emitter__=None,
+    ) -> str:
+        """List all WhatsApp chats (recent conversations)."""
+        await self._emit(__event_emitter__, "Fetching WhatsApp chats...", "in_progress")
+
+        err = await self._ensure_config(__user__)
+        if err:
+            await self._emit(__event_emitter__, err, "error")
+            return err
+
+        import aiohttp
+
+        url = f"{self.valves.evolution_api_url}/chat/findChats/{self._instance()}"
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.get(url, headers=self._headers()) as resp:
+                    data = await resp.json(content_type=None)
+                    if resp.status >= 400:
+                        msg = f"Evolution API error ({resp.status}): {data}"
+                        await self._emit(__event_emitter__, msg, "error")
+                        return msg
+
+            if not data or not isinstance(data, list):
+                await self._emit(__event_emitter__, "No chats found.", "complete")
+                return "No chats found."
+
+            lines = [f"WhatsApp chats ({len(data)}):"]
+            for chat in data[:50]:
+                jid = chat.get("id") or chat.get("jid") or ""
+                name = chat.get("name") or chat.get("pushName") or ""
+                number = jid.split("@")[0] if "@" in jid else jid
+                unread = chat.get("unreadCount", 0)
+                label = name if name else f"+{number}"
+                suffix = f" ({unread} unread)" if unread else ""
+                lines.append(f"- {label}: +{number}{suffix}")
+
+            await self._emit(
+                __event_emitter__, f"Found {len(data)} chats.", "complete"
+            )
+            return "\n".join(lines)
+        except Exception as exc:
+            msg = f"Failed to fetch chats: {exc}"
+            await self._emit(__event_emitter__, msg, "error")
+            return msg
+
+    async def _emit(self, emitter, description: str, status: str) -> None:
+        if not emitter:
             return
-        await event_emitter(
-            {
-                "type": "status",
-                "data": {
-                    "description": description,
-                    "status": status,
-                },
-            }
+        await emitter(
+            {"type": "status", "data": {"description": description, "status": status}}
         )

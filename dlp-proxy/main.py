@@ -306,14 +306,17 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
                 status_code=400,
             )
 
+        authed_user = data.get("authed_user", {})
         save_user_tokens(
             user_id,
             {
                 "access_token": data.get("access_token", ""),
                 "bot_token": data.get("access_token", ""),
+                "user_token": authed_user.get("access_token", ""),
                 "team_id": data.get("team", {}).get("id", ""),
                 "team_name": data.get("team", {}).get("name", ""),
                 "scope": data.get("scope", ""),
+                "user_scope": authed_user.get("scope", ""),
             },
             provider="slack",
         )
@@ -379,6 +382,29 @@ async def get_tokens(user_id: str, provider: str = "google"):
         "scope": tokens.get("scope", ""),
         "has_refresh_token": bool(tokens.get("refresh_token")),
     }
+
+
+@app.get("/oauth/tokens/{user_id}/full")
+async def get_full_tokens(user_id: str, provider: str = "google"):
+    """Return full token payload for tool use (called by Open WebUI tools)."""
+    if provider == "whatsapp":
+        # Return Evolution API config so the WhatsApp tool can call Evolution directly
+        instance_name = _wa_instance_name(user_id)
+        return {
+            "connected": True,
+            "provider": "whatsapp",
+            "evolution_api_url": EVOLUTION_API_URL,
+            "evolution_api_key": EVOLUTION_API_KEY,
+            "instance_name": instance_name,
+        }
+
+    tokens = load_user_tokens(user_id, provider)
+    if not tokens:
+        raise HTTPException(status_code=404, detail="No tokens for this user")
+    # Strip internal metadata
+    safe = {k: v for k, v in tokens.items() if k not in ("user_id", "updated_at")}
+    safe["connected"] = True
+    return safe
 
 
 @app.get("/oauth/refresh/{user_id}")
@@ -479,7 +505,7 @@ async def _whatsapp_connect(user_id: str):
         <div class="connected" id="done">
             <h2 style="color:#4ade80;">WhatsApp Connected</h2>
             <p>You can close this tab and return to your chat.</p>
-            <p style="margin-top:1rem;font-size:0.85rem;color:#6b7280;">Your WhatsApp Business messaging is now active.</p>
+            <p style="margin-top:1rem;font-size:0.85rem;color:#6b7280;">Your WhatsApp messaging is now active.</p>
         </div>
     </div>
     <script>
@@ -491,6 +517,8 @@ async def _whatsapp_connect(user_id: str):
                         clearInterval(poll);
                         document.getElementById('qr').classList.add('hide');
                         document.getElementById('done').classList.add('show');
+                        // Auto-close after 2s so onboarding popup detects closure
+                        setTimeout(function() {{ window.close(); }}, 2000);
                     }}
                 }})
                 .catch(function() {{}});

@@ -19,10 +19,41 @@ class Tools:
     class Valves(BaseModel):
         slack_bot_token: str = ""  # xoxb-... token
         slack_user_token: str = ""
+        dlp_proxy_url: str = "http://dlp-proxy:8080"
 
     def __init__(self) -> None:
         self.valves = self.Valves()
         self._user_cache: dict[str, str] = {}
+
+    async def _ensure_tokens(self, __user__: dict | None = None) -> str | None:
+        """Load Slack tokens from DLP proxy if valves are empty."""
+        if self.valves.slack_bot_token:
+            return None
+
+        if not __user__:
+            return "Slack bot token is not configured."
+
+        user_id = __user__.get("id") or __user__.get("sub") or ""
+        if not user_id:
+            return "Cannot determine user ID for Slack config lookup."
+
+        import aiohttp
+
+        try:
+            url = f"{self.valves.dlp_proxy_url}/oauth/tokens/{user_id}/full?provider=slack"
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        return "Slack not connected. Use the Connect panel to link your Slack workspace."
+                    data = await resp.json()
+                    self.valves.slack_bot_token = data.get("bot_token") or data.get("access_token", "")
+                    self.valves.slack_user_token = data.get("user_token", "")
+        except Exception:
+            return "Could not reach DLP proxy to load Slack tokens."
+
+        if not self.valves.slack_bot_token:
+            return "Slack not connected. Use the Connect panel to link your Slack workspace."
+        return None
 
     async def send_message(
         self,
@@ -32,8 +63,9 @@ class Tools:
         __user__: dict | None = None,
         __event_emitter__=None,
     ) -> str:
-        if not self.valves.slack_bot_token:
-            return "Slack bot token is not configured."
+        err = await self._ensure_tokens(__user__)
+        if err:
+            return err
 
         await self._emit_status(
             __event_emitter__,
@@ -89,8 +121,9 @@ class Tools:
         __user__: dict | None = None,
         __event_emitter__=None,
     ) -> str:
+        await self._ensure_tokens(__user__)
         if not self.valves.slack_user_token:
-            return "Slack user token is required for search (search:read)."
+            return "Slack user token is required for search (search:read). Re-connect Slack with user scopes."
 
         await self._emit_status(
             __event_emitter__,
@@ -145,8 +178,9 @@ class Tools:
         __user__: dict | None = None,
         __event_emitter__=None,
     ) -> str:
-        if not self.valves.slack_bot_token:
-            return "Slack bot token is not configured."
+        err = await self._ensure_tokens(__user__)
+        if err:
+            return err
 
         await self._emit_status(
             __event_emitter__,
@@ -208,8 +242,9 @@ class Tools:
         __user__: dict | None = None,
         __event_emitter__=None,
     ) -> str:
-        if not self.valves.slack_bot_token:
-            return "Slack bot token is not configured."
+        err = await self._ensure_tokens(__user__)
+        if err:
+            return err
 
         await self._emit_status(
             __event_emitter__,
