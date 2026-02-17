@@ -31,13 +31,26 @@ DLP_MIN_LIKELIHOOD = os.getenv("DLP_MIN_LIKELIHOOD", "LIKELY")
 BLOCK_ON_FINDING = os.getenv("BLOCK_ON_FINDING", "false").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# OAuth 2.0 config
+# OAuth 2.0 config — Google
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 OAUTH_REDIRECT_URI = os.getenv(
     "OAUTH_REDIRECT_URI", "https://os.envsn.com/oauth/callback"
 )
-OAUTH_SCOPES = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly"
+GOOGLE_SCOPES = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly"
+
+# OAuth 2.0 config — Slack
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+SLACK_SCOPES = os.getenv(
+    "SLACK_SCOPES",
+    "channels:read,channels:history,chat:write,users:read,files:read",
+)
+
+# WhatsApp — Evolution API
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://evolution-api:8080")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
+
 TOKEN_STORE_DIR = Path(os.getenv("TOKEN_STORE_DIR", "/data/tokens"))
 TOKEN_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -158,48 +171,95 @@ def extract_messages_text(body: dict) -> str:
 # ─── OAuth 2.0 Token Store Helpers ─────────────────────────────────────────────
 
 
-def _token_path(user_id: str) -> Path:
+def _token_path(user_id: str, provider: str = "google") -> Path:
     safe_id = hashlib.sha256(user_id.encode()).hexdigest()[:16]
-    return TOKEN_STORE_DIR / f"{safe_id}.json"
+    if provider == "google":
+        # Backward compat: google tokens use the original filename
+        return TOKEN_STORE_DIR / f"{safe_id}.json"
+    return TOKEN_STORE_DIR / f"{safe_id}_{provider}.json"
 
 
-def load_user_tokens(user_id: str) -> dict | None:
-    path = _token_path(user_id)
+def load_user_tokens(user_id: str, provider: str = "google") -> dict | None:
+    path = _token_path(user_id, provider)
     if path.exists():
         return json.loads(path.read_text())
     return None
 
 
-def save_user_tokens(user_id: str, tokens: dict) -> None:
+def save_user_tokens(user_id: str, tokens: dict, provider: str = "google") -> None:
     tokens["updated_at"] = time.time()
     tokens["user_id"] = user_id
-    _token_path(user_id).write_text(json.dumps(tokens, indent=2))
+    tokens["provider"] = provider
+    _token_path(user_id, provider).write_text(json.dumps(tokens, indent=2))
 
 
 # ─── OAuth 2.0 Routes ─────────────────────────────────────────────────────────
 
 
+def _create_state(user_id: str, provider: str) -> str:
+    state = hashlib.sha256(f"{user_id}:{provider}:{time.time()}".encode()).hexdigest()[:32]
+    state_path = TOKEN_STORE_DIR / f"state_{state}.json"
+    state_path.write_text(
+        json.dumps({"user_id": user_id, "provider": provider, "created": time.time()})
+    )
+    return state
+
+
 @app.get("/oauth/start")
-async def oauth_start(user_id: str = "default"):
+async def oauth_start(user_id: str = "default", provider: str = "google"):
+    # ── Slack OAuth ───────────────────────────────────────────────────
+    if provider == "slack":
+        if not SLACK_CLIENT_ID:
+            raise HTTPException(status_code=500, detail="SLACK_CLIENT_ID not configured")
+        state = _create_state(user_id, "slack")
+        params = urllib.parse.urlencode(
+            {
+                "client_id": SLACK_CLIENT_ID,
+                "redirect_uri": OAUTH_REDIRECT_URI,
+                "scope": SLACK_SCOPES,
+                "state": state,
+            }
+        )
+        return RedirectResponse(f"https://slack.com/oauth/v2/authorize?{params}")
+
+    # ── WhatsApp via Evolution API ────────────────────────────────────
+    if provider == "whatsapp":
+        return await _whatsapp_connect(user_id)
+
+    # ── Google OAuth (default) ────────────────────────────────────────
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured")
-
-    state = hashlib.sha256(f"{user_id}:{time.time()}".encode()).hexdigest()[:32]
-    state_path = TOKEN_STORE_DIR / f"state_{state}.json"
-    state_path.write_text(json.dumps({"user_id": user_id, "created": time.time()}))
-
+    state = _create_state(user_id, "google")
     params = urllib.parse.urlencode(
         {
             "client_id": GOOGLE_CLIENT_ID,
             "redirect_uri": OAUTH_REDIRECT_URI,
             "response_type": "code",
-            "scope": OAUTH_SCOPES,
+            "scope": GOOGLE_SCOPES,
             "access_type": "offline",
             "prompt": "consent",
             "state": state,
         }
     )
     return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+
+_SUCCESS_HTML = """
+<html>
+<head><style>
+    body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-serif;
+           display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+    .card {{ text-align: center; padding: 3rem; border-radius: 16px;
+            background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); }}
+    h2 {{ color: #4ade80; margin-bottom: 0.5rem; }}
+    p {{ color: #9ca3af; }}
+</style></head>
+<body><div class="card">
+    <h2>{title}</h2>
+    <p>You can close this tab and return to your chat.</p>
+    <p style="margin-top:2rem;font-size:0.85rem;color:#6b7280;">{detail}</p>
+</div></body></html>
+"""
 
 
 @app.get("/oauth/callback")
@@ -219,7 +279,53 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
     state_data = json.loads(state_path.read_text())
     state_path.unlink(missing_ok=True)
     user_id = state_data.get("user_id", "default")
+    provider = state_data.get("provider", "google")
 
+    # ── Slack token exchange ──────────────────────────────────────────
+    if provider == "slack":
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://slack.com/api/oauth.v2.access",
+                data={
+                    "code": code,
+                    "client_id": SLACK_CLIENT_ID,
+                    "client_secret": SLACK_CLIENT_SECRET,
+                    "redirect_uri": OAUTH_REDIRECT_URI,
+                },
+            )
+
+        if resp.status_code != 200:
+            logger.error("Slack token exchange HTTP error: %s", resp.text)
+            return HTMLResponse("<h2>Slack token exchange failed</h2>", status_code=500)
+
+        data = resp.json()
+        if not data.get("ok"):
+            logger.error("Slack token exchange error: %s", data.get("error"))
+            return HTMLResponse(
+                f"<h2>Slack authorization failed</h2><p>{data.get('error')}</p>",
+                status_code=400,
+            )
+
+        save_user_tokens(
+            user_id,
+            {
+                "access_token": data.get("access_token", ""),
+                "bot_token": data.get("access_token", ""),
+                "team_id": data.get("team", {}).get("id", ""),
+                "team_name": data.get("team", {}).get("name", ""),
+                "scope": data.get("scope", ""),
+            },
+            provider="slack",
+        )
+        logger.info("Slack tokens saved for user_id=%s", user_id)
+        return HTMLResponse(
+            _SUCCESS_HTML.format(
+                title="Slack Connected",
+                detail="Your Slack workspace is now linked.",
+            )
+        )
+
+    # ── Google token exchange (default) ───────────────────────────────
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -251,28 +357,21 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
     )
 
     logger.info("OAuth tokens saved for user_id=%s", user_id)
-    return HTMLResponse("""
-    <html>
-    <head><style>
-        body { background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-serif;
-               display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { text-align: center; padding: 3rem; border-radius: 16px;
-                background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); }
-        h2 { color: #4ade80; margin-bottom: 0.5rem; }
-        p { color: #9ca3af; }
-    </style></head>
-    <body><div class="card">
-        <h2>Google Account Connected</h2>
-        <p>You can close this tab and return to your chat.</p>
-        <p style="margin-top:2rem;font-size:0.85rem;color:#6b7280;">
-            Your Gmail, Calendar, and Drive tools are now active.</p>
-    </div></body></html>
-    """)
+    return HTMLResponse(
+        _SUCCESS_HTML.format(
+            title="Google Account Connected",
+            detail="Your Gmail, Calendar, and Drive tools are now active.",
+        )
+    )
 
 
 @app.get("/oauth/tokens/{user_id}")
-async def get_tokens(user_id: str):
-    tokens = load_user_tokens(user_id)
+async def get_tokens(user_id: str, provider: str = "google"):
+    # ── WhatsApp: check Evolution API instance ────────────────────────
+    if provider == "whatsapp":
+        return await _whatsapp_check(user_id)
+
+    tokens = load_user_tokens(user_id, provider)
     if not tokens:
         raise HTTPException(status_code=404, detail="No tokens for this user")
     return {
@@ -308,6 +407,124 @@ async def refresh_token(user_id: str):
     save_user_tokens(user_id, tokens)
 
     return {"access_token": tokens["access_token"], "expires_in": tokens["expires_in"]}
+
+
+# ─── WhatsApp via Evolution API ───────────────────────────────────────────────
+
+
+def _wa_instance_name(user_id: str) -> str:
+    return f"envision_{hashlib.sha256(user_id.encode()).hexdigest()[:12]}"
+
+
+async def _whatsapp_connect(user_id: str):
+    """Create or fetch a WhatsApp instance and show a QR code page."""
+    if not EVOLUTION_API_KEY:
+        raise HTTPException(status_code=500, detail="EVOLUTION_API_KEY not configured")
+
+    instance_name = _wa_instance_name(user_id)
+    headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(base_url=EVOLUTION_API_URL, timeout=30.0) as client:
+        # Try to create instance (idempotent — returns existing if already created)
+        create_resp = await client.post(
+            "/instance/create",
+            json={
+                "instanceName": instance_name,
+                "integration": "WHATSAPP-BAILEYS",
+                "qrcode": True,
+            },
+            headers=headers,
+        )
+        logger.info("Evolution create instance %s: %s", instance_name, create_resp.status_code)
+
+        # Fetch QR code
+        qr_resp = await client.get(
+            f"/instance/connect/{instance_name}",
+            headers=headers,
+        )
+
+    if qr_resp.status_code != 200:
+        logger.error("Evolution QR fetch failed: %s", qr_resp.text)
+        return HTMLResponse(
+            "<h2>WhatsApp connection failed</h2><p>Could not generate QR code.</p>",
+            status_code=500,
+        )
+
+    qr_data = qr_resp.json()
+    qr_base64 = qr_data.get("base64", "")
+    qr_code = qr_data.get("code", "")
+
+    # Render a page with the QR code that auto-polls for connection
+    return HTMLResponse(f"""
+    <html>
+    <head><style>
+        body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, sans-serif;
+               display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+        .card {{ text-align: center; padding: 2.5rem; border-radius: 16px; max-width: 420px;
+                background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); }}
+        h2 {{ color: #25D366; margin-bottom: 0.5rem; }}
+        p {{ color: #9ca3af; font-size: 0.9rem; }}
+        img {{ border-radius: 12px; margin: 1.5rem 0; }}
+        .connected {{ display: none; }}
+        .connected.show {{ display: block; }}
+        .qr-area.hide {{ display: none; }}
+    </style></head>
+    <body><div class="card">
+        <div class="qr-area" id="qr">
+            <h2>Connect WhatsApp</h2>
+            <p>Scan this QR code with your phone's WhatsApp app</p>
+            <img src="{qr_base64}" width="260" height="260" alt="QR Code" />
+            <p style="font-size:0.8rem;color:#6b7280;">Open WhatsApp &gt; Settings &gt; Linked Devices &gt; Link a Device</p>
+        </div>
+        <div class="connected" id="done">
+            <h2 style="color:#4ade80;">WhatsApp Connected</h2>
+            <p>You can close this tab and return to your chat.</p>
+            <p style="margin-top:1rem;font-size:0.85rem;color:#6b7280;">Your WhatsApp Business messaging is now active.</p>
+        </div>
+    </div>
+    <script>
+        var poll = setInterval(function() {{
+            fetch('/oauth/tokens/{qr_code or "check"}?provider=whatsapp&instance={instance_name}')
+                .then(function(r) {{ return r.ok ? r.json() : null; }})
+                .then(function(d) {{
+                    if (d && d.connected) {{
+                        clearInterval(poll);
+                        document.getElementById('qr').classList.add('hide');
+                        document.getElementById('done').classList.add('show');
+                    }}
+                }})
+                .catch(function() {{}});
+        }}, 3000);
+    </script>
+    </body></html>
+    """)
+
+
+async def _whatsapp_check(user_id: str, instance: str = ""):
+    """Check whether a WhatsApp instance is connected."""
+    if not EVOLUTION_API_KEY:
+        raise HTTPException(status_code=404, detail="WhatsApp not configured")
+
+    instance_name = instance or _wa_instance_name(user_id)
+    headers = {"apikey": EVOLUTION_API_KEY}
+
+    try:
+        async with httpx.AsyncClient(
+            base_url=EVOLUTION_API_URL, timeout=10.0
+        ) as client:
+            resp = await client.get(
+                f"/instance/connectionState/{instance_name}",
+                headers=headers,
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            state = data.get("instance", {}).get("state", "")
+            if state == "open":
+                return {"connected": True, "state": state}
+    except Exception:
+        logger.exception("Evolution API check failed")
+
+    raise HTTPException(status_code=404, detail="WhatsApp not connected")
 
 
 @app.get("/health")

@@ -24,11 +24,12 @@ spec:
         runAsNonRoot: true
         runAsUser: 65534  # nobody
         runAsGroup: 65534
+        fsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: dlp-proxy
-          image: docker.io/avireddy0/open-os-dlp-proxy:latest
+          image: docker.io/avireddy0/open-os-dlp-proxy:v2.1
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -57,6 +58,27 @@ spec:
                   key: google-client-secret
             - name: OAUTH_REDIRECT_URI
               value: "https://os.envsn.com/oauth/callback"
+            # Slack OAuth
+            - name: SLACK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: openos-secrets
+                  key: slack-client-id
+                  optional: true
+            - name: SLACK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openos-secrets
+                  key: slack-client-secret
+                  optional: true
+            # WhatsApp via Evolution API
+            - name: EVOLUTION_API_URL
+              value: "http://evolution-api:8080"
+            - name: EVOLUTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openos-secrets
+                  key: evolution-api-key
           resources:
             requests:
               cpu: 100m
@@ -95,5 +117,17 @@ spec:
           emptyDir:
             sizeLimit: 64Mi
         - name: token-store
-          emptyDir:
-            sizeLimit: 32Mi
+          persistentVolumeClaim:
+            claimName: dlp-proxy-tokens
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dlp-proxy-tokens
+  namespace: open-os
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 1Gi

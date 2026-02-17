@@ -15,20 +15,12 @@ spec:
         app: evolution-api
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: evolution-api
           image: atendai/evolution-api:latest
-          command: ["sh", "-c", "rm -f .env && npm run db:deploy && npm run db:generate && npm run start:prod"]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+          command: ["sh", "-c", "rm -f .env 2>/dev/null || true; npm run db:deploy && npm run db:generate && npm run start:prod"]
           ports:
             - containerPort: 8080
           env:
@@ -226,16 +218,25 @@ spec:
         app: evolution-postgres
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 70
-        runAsGroup: 70
         fsGroup: 70
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: fix-permissions
+          image: postgres:15-alpine
+          command: ["sh", "-c", "chown -R 70:70 /var/lib/postgresql/data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
       containers:
         - name: postgres
           image: postgres:15-alpine
           securityContext:
+            runAsUser: 70
+            runAsGroup: 70
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
