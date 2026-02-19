@@ -44,7 +44,7 @@ SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
 SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
 SLACK_USER_SCOPES = os.getenv(
     "SLACK_USER_SCOPES",
-    "channels:read,channels:history,chat:write,users:read,files:read,search:read",
+    "channels:read,channels:history,chat:write,users:read,files:read",
 )
 
 # WhatsApp — Evolution API

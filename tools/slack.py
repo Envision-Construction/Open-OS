@@ -48,6 +48,9 @@ class Tools:
                     data = await resp.json()
                     self.valves.slack_bot_token = data.get("bot_token") or data.get("access_token", "")
                     self.valves.slack_user_token = data.get("user_token", "")
+                    # Personal OAuth: ensure user token works for all operations
+                    if not self.valves.slack_bot_token and self.valves.slack_user_token:
+                        self.valves.slack_bot_token = self.valves.slack_user_token
         except Exception:
             return "Could not reach DLP proxy to load Slack tokens."
 
