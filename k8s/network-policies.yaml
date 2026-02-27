@@ -78,6 +78,31 @@ spec:
           protocol: TCP
 
 ---
+# ─── Evolution API: allow ingress from DLP Proxy and Open WebUI ─────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dlp-proxy-to-evolution-api
+  namespace: open-os
+spec:
+  podSelector:
+    matchLabels:
+      app: evolution-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: dlp-proxy
+        - podSelector:
+            matchLabels:
+              app: open-webui
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
 # ─── OpenClaw: allow ingress from DLP Proxy only ─────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -111,6 +136,28 @@ spec:
 #   podSelector: {}
 #   policyTypes:
 #     - Egress
+
+---
+# ─── DLP Proxy: allow egress to Evolution API ───────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dlp-proxy-egress-to-evolution-api
+  namespace: open-os
+spec:
+  podSelector:
+    matchLabels:
+      app: dlp-proxy
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: evolution-api
+      ports:
+        - port: 8080
+          protocol: TCP
 
 ---
 # ─── Allow DNS egress for all pods ───────────────────────────────────────────
@@ -230,4 +277,6 @@ spec:
         - port: 443
           protocol: TCP
         - port: 80
+          protocol: TCP
+        - port: 5222
           protocol: TCP

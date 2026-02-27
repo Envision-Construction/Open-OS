@@ -6,6 +6,8 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: evolution-api
@@ -19,7 +21,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: evolution-api
-          image: atendai/evolution-api:latest
+          image: evoapicloud/evolution-api:latest
           command: ["sh", "-c", "rm -f .env 2>/dev/null || true; npm run db:deploy && npm run db:generate && npm run start:prod"]
           ports:
             - containerPort: 8080
@@ -45,6 +47,22 @@ spec:
               value: "true"
             - name: DATABASE_PROVIDER
               value: "postgresql"
+            - name: DATABASE_SAVE_DATA_INSTANCE
+              value: "true"
+            - name: DATABASE_SAVE_DATA_NEW_MESSAGE
+              value: "true"
+            - name: DATABASE_SAVE_MESSAGE_UPDATE
+              value: "true"
+            - name: DATABASE_SAVE_DATA_CONTACTS
+              value: "true"
+            - name: DATABASE_SAVE_DATA_CHATS
+              value: "true"
+            - name: DATABASE_SAVE_DATA_HISTORIC
+              value: "true"
+            - name: DATABASE_SAVE_IS_ON_WHATSAPP
+              value: "true"
+            - name: DATABASE_SAVE_IS_ON_WHATSAPP_DAYS
+              value: "30"
             - name: DATABASE_CONNECTION_URI
               valueFrom:
                 secretKeyRef:
@@ -53,7 +71,7 @@ spec:
             - name: DATABASE_CONNECTION_CLIENT_NAME
               value: "evolution_api"
             - name: CACHE_REDIS_ENABLED
-              value: "true"
+              value: "false"
             - name: CACHE_REDIS_URI
               value: "redis://valkey:6379/6"
             - name: CACHE_REDIS_PREFIX_KEY
@@ -61,17 +79,19 @@ spec:
             - name: CACHE_REDIS_SAVE_INSTANCES
               value: "true"
             - name: CACHE_LOCAL_ENABLED
-              value: "false"
+              value: "true"
             - name: CONFIG_SESSION_PHONE_CLIENT
-              value: "Envision OS"
+              value: "Chrome"
             - name: CONFIG_SESSION_PHONE_NAME
               value: "Chrome"
+            - name: CONFIG_SESSION_PHONE_VERSION
+              value: "10.0.22631"
             - name: DEL_INSTANCE
               value: "false"
             - name: DEL_TEMP_INSTANCES
-              value: "true"
+              value: "false"
             - name: LOG_LEVEL
-              value: "ERROR"
+              value: "INFO"
           volumeMounts:
             - name: instances
               mountPath: /evolution/instances

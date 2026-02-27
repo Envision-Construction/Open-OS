@@ -11,6 +11,7 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 
 PROJECT_ID="open-os-prod"
+REDIRECT_URI="${REDIRECT_URI:-https://os.envsn.com/oauth/callback}"
 SCOPES="https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/calendar.events,https://www.googleapis.com/auth/drive.readonly,https://www.googleapis.com/auth/contacts.readonly"
 
 echo "=== Google OAuth Setup for OpenClaw gog Skill ==="
@@ -40,7 +41,7 @@ if [ "$CLIENT_ID_SET" = false ]; then
   echo "Step 2: Enter OAuth 2.0 credentials"
   echo "  Create at: https://console.cloud.google.com/apis/credentials?project=$PROJECT_ID"
   echo "  Type: Web application"
-  echo "  Authorized redirect URI: http://localhost:8080/callback"
+  echo "  Authorized redirect URI: $REDIRECT_URI"
   echo ""
 
   read -rp "  Client ID: " NEW_CLIENT_ID
@@ -65,7 +66,7 @@ echo ""
 FETCHED_CLIENT_ID=$(gcloud secrets versions access latest --secret="google-oauth-client-id" --project="$PROJECT_ID")
 FETCHED_CLIENT_SECRET=$(gcloud secrets versions access latest --secret="google-oauth-client-secret" --project="$PROJECT_ID")
 
-AUTH_URL="https://accounts.google.com/o/oauth2/v2/auth?client_id=${FETCHED_CLIENT_ID}&redirect_uri=http://localhost:8080/callback&response_type=code&scope=${SCOPES}&access_type=offline&prompt=consent"
+AUTH_URL="https://accounts.google.com/o/oauth2/v2/auth?client_id=${FETCHED_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPES}&access_type=offline&prompt=consent"
 
 echo "  Open this URL in your browser:"
 echo ""
@@ -79,7 +80,7 @@ RESPONSE=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
   -d "code=$AUTH_CODE" \
   -d "client_id=$FETCHED_CLIENT_ID" \
   -d "client_secret=$FETCHED_CLIENT_SECRET" \
-  -d "redirect_uri=http://localhost:8080/callback" \
+  -d "redirect_uri=$REDIRECT_URI" \
   -d "grant_type=authorization_code")
 
 REFRESH_TOKEN=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))")

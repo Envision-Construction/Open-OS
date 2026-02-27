@@ -50,7 +50,7 @@ spec:
                   name: openos-secrets
                   key: webui-secret-key
             - name: ENABLE_SIGNUP
-              value: "false"
+              value: "true"
             - name: DEFAULT_USER_ROLE
               value: "user"
             - name: WEBUI_AUTH

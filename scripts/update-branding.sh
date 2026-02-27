@@ -46,5 +46,10 @@ kubectl create configmap branding-onboarding-js \
   --from-file=onboarding.js="$ASSETS_DIR/onboarding.js" \
   -n "$NAMESPACE" $DRY_RUN -o yaml --dry-run=client | kubectl apply -f - $DRY_RUN
 
+# Live deployment mounts /static/loader.js from this ConfigMap key.
+kubectl create configmap branding-loader-js \
+  --from-file=loaderjs="$ASSETS_DIR/onboarding.js" \
+  -n "$NAMESPACE" $DRY_RUN -o yaml --dry-run=client | kubectl apply -f - $DRY_RUN
+
 echo "Done. Restart the open-webui pod to pick up changes:"
 echo "  kubectl rollout restart deployment/open-webui -n $NAMESPACE"
