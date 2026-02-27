@@ -116,7 +116,7 @@ services:
       - CACHE_REDIS_SAVE_INSTANCES=false
       - CACHE_LOCAL_ENABLED=false
       # Session
-      - CONFIG_SESSION_PHONE_CLIENT=Envision OS
+      - CONFIG_SESSION_PHONE_CLIENT=Evolution API
       - CONFIG_SESSION_PHONE_NAME=Chrome
       - DEL_INSTANCE=false
       - DEL_TEMP_INSTANCES=true

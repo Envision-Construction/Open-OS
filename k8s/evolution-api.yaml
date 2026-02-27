@@ -81,11 +81,9 @@ spec:
             - name: CACHE_LOCAL_ENABLED
               value: "true"
             - name: CONFIG_SESSION_PHONE_CLIENT
-              value: "Chrome"
+              value: "Evolution API"
             - name: CONFIG_SESSION_PHONE_NAME
               value: "Chrome"
-            - name: CONFIG_SESSION_PHONE_VERSION
-              value: "10.0.22631"
             - name: DEL_INSTANCE
               value: "false"
             - name: DEL_TEMP_INSTANCES
