@@ -98,9 +98,9 @@ class Tools:
                         msg = f"Evolution API error ({resp.status}): {error_msg}"
                         await self._emit(__event_emitter__, msg, "error")
                         return msg
+                    msg_key = data.get("key", {}).get("id", "") if isinstance(data, dict) else ""
 
             await self._emit(__event_emitter__, "WhatsApp message sent.", "complete")
-            msg_key = data.get("key", {}).get("id", "") if isinstance(data, dict) else ""
             if msg_key:
                 return f"WhatsApp message sent. ID: {msg_key}"
             return "WhatsApp message sent successfully."
@@ -193,8 +193,7 @@ class Tools:
                         msg = f"Evolution API error ({resp.status}): {data}"
                         await self._emit(__event_emitter__, msg, "error")
                         return msg
-
-            messages = data if isinstance(data, list) else data.get("messages", data.get("data", []))
+                    messages = data if isinstance(data, list) else data.get("messages", data.get("data", []))
             if not messages:
                 await self._emit(__event_emitter__, "No messages found.", "complete")
                 return "No messages found."

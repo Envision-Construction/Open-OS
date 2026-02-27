@@ -9,6 +9,7 @@ required_pip_packages: slack_sdk aiohttp
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -108,8 +109,16 @@ class Tools:
                 "Message sent.",
             )
             return formatted
-        except Exception as exc:
+        except SlackApiError as exc:
             error = exc.response.get("error", "unknown_error")
+            await self._emit_status(
+                __event_emitter__,
+                "error",
+                f"Slack API error: {error}",
+            )
+            return f"Slack API error: {error}"
+        except Exception as exc:
+            error = str(exc)
             await self._emit_status(
                 __event_emitter__,
                 "error",
@@ -124,7 +133,9 @@ class Tools:
         __user__: dict | None = None,
         __event_emitter__=None,
     ) -> str:
-        await self._ensure_tokens(__user__)
+        err = await self._ensure_tokens(__user__)
+        if err:
+            return err
         if not self.valves.slack_user_token:
             return "Slack user token is required for search (search:read). Re-connect Slack with user scopes."
 
@@ -134,6 +145,7 @@ class Tools:
             f"Searching Slack for: {query}",
         )
 
+        from slack_sdk.errors import SlackApiError
         from slack_sdk.web.async_client import AsyncWebClient
 
         client = AsyncWebClient(token=self.valves.slack_user_token)
@@ -165,8 +177,16 @@ class Tools:
                 f"Found {len(lines)} messages.",
             )
             return "\n".join(lines)
-        except Exception as exc:
+        except SlackApiError as exc:
             error = exc.response.get("error", "unknown_error")
+            await self._emit_status(
+                __event_emitter__,
+                "error",
+                f"Slack API error: {error}",
+            )
+            return f"Slack API error: {error}"
+        except Exception as exc:
+            error = str(exc)
             await self._emit_status(
                 __event_emitter__,
                 "error",
@@ -255,6 +275,7 @@ class Tools:
             "Listing channels...",
         )
 
+        from slack_sdk.errors import SlackApiError
         from slack_sdk.web.async_client import AsyncWebClient
 
         client = AsyncWebClient(token=self.valves.slack_bot_token)
@@ -305,8 +326,16 @@ class Tools:
                 f"Found {len(lines)} channels.",
             )
             return "\n".join(lines)
-        except Exception as exc:
+        except SlackApiError as exc:
             error = exc.response.get("error", "unknown_error")
+            await self._emit_status(
+                __event_emitter__,
+                "error",
+                f"Slack API error: {error}",
+            )
+            return f"Slack API error: {error}"
+        except Exception as exc:
+            error = str(exc)
             await self._emit_status(
                 __event_emitter__,
                 "error",
@@ -319,7 +348,7 @@ class Tools:
         client: Any,
         channel: str,
     ) -> tuple[str | None, str | None]:
-        if channel.startswith(("C", "D", "G")):
+        if re.match(r'^[CDG][A-Z0-9]{8,12}$', channel):
             return channel, None
 
         channel_name = channel.lstrip("#")

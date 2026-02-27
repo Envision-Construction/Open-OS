@@ -15,7 +15,8 @@ import hashlib
 import json
 import logging
 import os
-import secrets
+import secrets as secrets_mod
+import stat
 import time
 import urllib.parse
 from pathlib import Path
@@ -23,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from google.cloud import dlp_v2
 
@@ -31,7 +32,8 @@ from google.cloud import dlp_v2
 OPENCLAW_UPSTREAM = os.getenv("OPENCLAW_UPSTREAM", "http://openclaw:11434")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "open-os-prod")
 DLP_MIN_LIKELIHOOD = os.getenv("DLP_MIN_LIKELIHOOD", "LIKELY")
-BLOCK_ON_FINDING = os.getenv("BLOCK_ON_FINDING", "false").lower() == "true"
+BLOCK_ON_FINDING = os.getenv("BLOCK_ON_FINDING", "true").lower() != "false"
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "").strip()
 REDACT_ASSISTANT_OUTPUT = (
     os.getenv("REDACT_ASSISTANT_OUTPUT", "false").lower() == "true"
 )
@@ -142,7 +144,7 @@ def inspect_content(text: str) -> list[dict[str, Any]]:
             )
         return findings
     except Exception:
-        logger.exception("DLP inspect_content failed")
+        logger.critical("DLP inspect_content FAILED — content passing through UNINSPECTED")
         return []
 
 
@@ -165,7 +167,7 @@ def redact_content(text: str) -> str:
         )
         return response.item.value
     except Exception:
-        logger.exception("DLP deidentify_content failed")
+        logger.critical("DLP redact_content FAILED — content passing through UNINSPECTED")
         return text
 
 
@@ -229,8 +231,12 @@ def redact_latest_user_message(body: dict) -> None:
 
 # ─── OAuth 2.0 Token Store Helpers ─────────────────────────────────────────────
 
+ALLOWED_PROVIDERS = {"google", "slack", "whatsapp"}
+
 
 def _token_path(user_id: str, provider: str = "google") -> Path:
+    if provider not in ALLOWED_PROVIDERS:
+        raise ValueError(f"Unknown provider: {provider}")
     safe_id = hashlib.sha256(user_id.encode()).hexdigest()[:16]
     if provider == "google":
         # Backward compat: google tokens use the original filename
@@ -249,7 +255,9 @@ def save_user_tokens(user_id: str, tokens: dict, provider: str = "google") -> No
     tokens["updated_at"] = time.time()
     tokens["user_id"] = user_id
     tokens["provider"] = provider
-    _token_path(user_id, provider).write_text(json.dumps(tokens, indent=2))
+    path = _token_path(user_id, provider)
+    path.write_text(json.dumps(tokens, indent=2))
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
 
 
 def delete_user_tokens(user_id: str, provider: str = "google") -> bool:
@@ -353,6 +361,11 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
 
     state_data = json.loads(state_path.read_text())
     state_path.unlink(missing_ok=True)
+
+    MAX_STATE_AGE = 600  # 10 minutes
+    if time.time() - state_data.get("created", 0) > MAX_STATE_AGE:
+        return HTMLResponse("<h2>OAuth state expired. Please restart.</h2>", status_code=400)
+
     user_id = state_data.get("user_id", "default")
     provider = state_data.get("provider", "google")
 
@@ -420,9 +433,7 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
 
     if resp.status_code != 200:
         logger.error("Token exchange failed: %s", resp.text)
-        return HTMLResponse(
-            f"<h2>Token exchange failed</h2><pre>{resp.text}</pre>", status_code=500
-        )
+        return HTMLResponse("<h2>Token exchange failed. Please try again.</h2>", status_code=500)
 
     tokens = resp.json()
     save_user_tokens(
@@ -446,7 +457,11 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
 
 
 @app.get("/oauth/tokens/{user_id}")
-async def get_tokens(user_id: str, provider: str = "google", instance: str = ""):
+async def get_tokens(user_id: str, provider: str = "google", instance: str = "", x_internal_key: str = Header(default="")):
+    if INTERNAL_API_KEY and not secrets_mod.compare_digest(x_internal_key, INTERNAL_API_KEY):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
     # ── WhatsApp: check Evolution API instance ────────────────────────
     if provider == "whatsapp":
         return await _whatsapp_check(user_id, instance=instance)
@@ -462,8 +477,11 @@ async def get_tokens(user_id: str, provider: str = "google", instance: str = "")
 
 
 @app.get("/oauth/tokens/{user_id}/full")
-async def get_full_tokens(user_id: str, provider: str = "google"):
+async def get_full_tokens(user_id: str, provider: str = "google", x_internal_key: str = Header(default="")):
     """Return full token payload for tool use (called by Open WebUI tools)."""
+    if INTERNAL_API_KEY and not secrets_mod.compare_digest(x_internal_key, INTERNAL_API_KEY):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     if provider == "whatsapp":
         # Only expose runtime config when the instance is actually connected.
         await _whatsapp_check(user_id)
@@ -473,7 +491,7 @@ async def get_full_tokens(user_id: str, provider: str = "google"):
             "connected": True,
             "provider": "whatsapp",
             "evolution_api_url": EVOLUTION_API_URL,
-            "evolution_api_key": EVOLUTION_API_KEY,
+            "evolution_api_key": "***redacted***",
             "instance_name": instance_name,
         }
 
@@ -1487,7 +1505,7 @@ async def _proxy_stream(body: dict, headers: dict) -> StreamingResponse:
                             if REDACT_ASSISTANT_OUTPUT:
                                 delta = chunk.get("choices", [{}])[0].get("delta", {})
                                 content = delta.get("content", "")
-                                if content and len(content) > 20:
+                                if content:
                                     findings = inspect_content(content)
                                     if findings:
                                         logger.warning(

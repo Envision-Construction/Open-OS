@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional
 import asyncio
 import json
 import os
+import time
 
 
 class Tools:
@@ -72,6 +73,17 @@ class Tools:
         self._mcp_initialized = False
         self._mcp_request_id = 0
         self._http_session = None
+        self._init_lock = asyncio.Lock()
+        self._mcp_init_failed_until = 0
+        self._google_creds = None
+        self._google_creds_expiry = 0
+
+    def _make_emitter(self, __event_emitter__: Callable[[Any], Any]) -> Callable:
+        if __event_emitter__ is None:
+            async def emit(_: Any) -> None:
+                return None
+            return emit
+        return __event_emitter__
 
     async def connect_google_account(
         self,
@@ -79,11 +91,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Start the Google OAuth flow. Generates a clickable authorization URL. After authorizing in your browser, copy the code and use complete_google_connection to finish setup."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -169,11 +177,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Complete the Google OAuth flow by exchanging an authorization code for access tokens. Provide the code from the OAuth callback page."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -274,11 +278,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Check which services are currently connected and configured."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -607,11 +607,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Send an email via Gmail. Supports plain text and CC recipients (comma-separated)."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -651,7 +647,7 @@ class Tools:
             message["subject"] = subject
 
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = service.users().messages().send(
                 userId="me", body={"raw": raw_message}
             )
@@ -684,11 +680,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search Gmail emails. Use Gmail search syntax (from:, to:, subject:, has:attachment, after:, before:, is:unread). For project-wide latest communication questions, this automatically routes to a cross-source digest."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         if self._is_latest_project_communication_query(query or ""):
@@ -730,7 +722,7 @@ class Tools:
 
             service = build("gmail", "v1", credentials=creds)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = (
                 service.users()
                 .messages()
@@ -817,11 +809,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Read the full content of a specific email by its message ID."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -854,7 +842,7 @@ class Tools:
 
             service = build("gmail", "v1", credentials=creds)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = (
                 service.users()
                 .messages()
@@ -948,11 +936,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """List upcoming Google Calendar events for the next N days."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -988,7 +972,7 @@ class Tools:
             time_min = now.isoformat()
             time_max = (now + timedelta(days=days_ahead)).isoformat()
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = (
                 service.events()
                 .list(
@@ -1084,15 +1068,12 @@ class Tools:
         description: str = "",
         attendees: str = "",
         location: str = "",
+        timezone: str = "America/Chicago",
         __user__: dict = None,
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Create a Google Calendar event. Times in ISO 8601 format. Attendees as comma-separated emails."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -1134,13 +1115,13 @@ class Tools:
                 "summary": title,
                 "description": description,
                 "location": location,
-                "start": {"dateTime": start_time},
-                "end": {"dateTime": end_time},
+                "start": {"dateTime": start_time, "timeZone": timezone},
+                "end": {"dateTime": end_time, "timeZone": timezone},
             }
             if attendee_list:
                 event["attendees"] = attendee_list
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = service.events().insert(calendarId="primary", body=event)
             await loop.run_in_executor(None, request.execute)
 
@@ -1197,11 +1178,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search Google Drive for files by name or content."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -1236,7 +1213,7 @@ class Tools:
             safe_query = query.replace("'", "\\'")
             q = f"name contains '{safe_query}' or fullText contains '{safe_query}'"
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = (
                 service.files()
                 .list(
@@ -1331,11 +1308,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Read the text content of a Google Drive file. Automatically exports Google Docs/Sheets/Slides to text."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -1369,7 +1342,7 @@ class Tools:
 
             service = build("drive", "v3", credentials=creds)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             request = (
                 service.files()
                 .get(fileId=file_id, fields="id, name, mimeType, modifiedTime, size")
@@ -1392,9 +1365,12 @@ class Tools:
 
             buffer = io.BytesIO()
             downloader = MediaIoBaseDownload(buffer, request)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
+            loop = asyncio.get_running_loop()
+            def _download():
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+            await loop.run_in_executor(None, _download)
 
             content_bytes = buffer.getvalue()
             try:
@@ -1456,11 +1432,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Send a Slack message to a channel or DM target. Supports channel name/ID, user ID, or Slack user profile URL."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -1806,11 +1778,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search Slack messages. Uses search.messages when available, with fallback to conversations history."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -2632,11 +2600,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Send a WhatsApp message. Phone number in international format (+15551234567)."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -2904,11 +2868,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Ask Envision OS a question about your construction projects. Access 390+ tools including Procore, Sage, Buildr, ClickUp, Rippling."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -3034,11 +2994,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Search construction documents (drawings, specs, RFIs, submittals) with AI-powered citations."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -3126,11 +3082,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """Call any Envision MCP tool by name. Use discover_envision_tools to find available tools. Arguments as JSON string."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -3214,11 +3166,7 @@ class Tools:
         __event_emitter__: Callable[[Any], Any] = None,
     ) -> str:
         """List available Envision MCP tools. Optionally filter by search keyword. There are 390+ tools across Procore, Sage, Slack, Gmail, Drive, Zoom, ClickUp, Rippling, Buildr, and more."""
-        emit = __event_emitter__ or (lambda x: None)
-        if __event_emitter__ is None:
-
-            async def emit(_: Any) -> None:
-                return None
+        emit = self._make_emitter(__event_emitter__)
 
         __user__ = __user__ or {}
         await emit(
@@ -3584,6 +3532,9 @@ class Tools:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
+        if self._google_creds and not self._google_creds.expired:
+            return self._google_creds
+
         scopes = [
             "openid",
             "email",
@@ -3637,8 +3588,9 @@ class Tools:
             creds = Credentials(token=access_token, scopes=scopes)
 
         if (not creds.valid or not creds.token) and creds.refresh_token:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, lambda: creds.refresh(Request()))
+        self._google_creds = creds
         return creds
 
     def _extract_user_id(self, __user__: Optional[dict]) -> str:
@@ -4035,31 +3987,38 @@ class Tools:
             "initialize",
             "notifications/initialized",
         ):
-            init_payload = {
-                "jsonrpc": "2.0",
-                "id": next_id(),
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "open-webui-envision-os",
-                        "version": "1.0.0",
-                    },
-                },
-            }
-            init_result = await send(init_payload)
-            if init_result and "result" in init_result:
-                self._mcp_initialized = True
-                await send(
-                    {
+            async with self._init_lock:
+                if self._mcp_initialized:
+                    pass  # another coroutine beat us to it
+                elif time.time() < self._mcp_init_failed_until:
+                    return {"error": "MCP initialization failed recently, backing off"}
+                else:
+                    init_payload = {
                         "jsonrpc": "2.0",
-                        "method": "notifications/initialized",
-                        "params": {},
+                        "id": next_id(),
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "open-webui-envision-os",
+                                "version": "1.0.0",
+                            },
+                        },
                     }
-                )
-            else:
-                return init_result
+                    init_result = await send(init_payload)
+                    if init_result and "result" in init_result:
+                        self._mcp_initialized = True
+                        # Send as a notification — no id field, no response expected
+                        await send(
+                            {
+                                "jsonrpc": "2.0",
+                                "method": "notifications/initialized",
+                            }
+                        )
+                    else:
+                        self._mcp_init_failed_until = time.time() + 10
+                        return init_result
 
         payload = {
             "jsonrpc": "2.0",

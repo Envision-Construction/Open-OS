@@ -185,6 +185,7 @@ class Tools:
         description: str = "",
         location: str = "",
         attendees: str = "",
+        timezone: str = "America/Chicago",
         *,
         __user__: dict,
         __event_emitter__,
@@ -198,8 +199,8 @@ class Tools:
             service = await self._get_service()
             event_body: Dict[str, Any] = {
                 "summary": title,
-                "start": {"dateTime": start_time},
-                "end": {"dateTime": end_time},
+                "start": {"dateTime": start_time, "timeZone": timezone},
+                "end": {"dateTime": end_time, "timeZone": timezone},
             }
             if description:
                 event_body["description"] = description
@@ -256,6 +257,7 @@ class Tools:
         start_time: str = "",
         end_time: str = "",
         description: str = "",
+        timezone: str = "",
         *,
         __user__: dict,
         __event_emitter__,
@@ -288,10 +290,14 @@ class Tools:
                 event.setdefault("start", {})
                 event["start"]["dateTime"] = start_time
                 event["start"].pop("date", None)
+                if timezone:
+                    event["start"]["timeZone"] = timezone
             if end_time:
                 event.setdefault("end", {})
                 event["end"]["dateTime"] = end_time
                 event["end"].pop("date", None)
+                if timezone:
+                    event["end"]["timeZone"] = timezone
 
             await self._emit_status(__event_emitter__, "Updating event...")
 

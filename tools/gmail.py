@@ -7,6 +7,7 @@ description: Send, search, and read Gmail emails using Google OAuth 2.0
 required_pip_packages: google-auth google-auth-oauthlib google-api-python-client
 """
 
+import asyncio
 import base64
 from email.mime.text import MIMEText
 from typing import Dict, List, Optional
@@ -28,7 +29,7 @@ class Tools:
     def __init__(self) -> None:
         self.valves = self.Valves()
 
-    def _build_credentials(self) -> Credentials:
+    async def _build_credentials(self) -> Credentials:
         creds = Credentials(
             token=None,
             refresh_token=self.valves.google_refresh_token,
@@ -38,7 +39,10 @@ class Tools:
             scopes=SCOPES,
         )
         if not creds.valid and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                await asyncio.to_thread(creds.refresh, Request())
+            except Exception as e:
+                raise RuntimeError(f"Google credential refresh failed: {e}") from e
         return creds
 
     def _get_header(self, headers: List[Dict[str, str]], name: str) -> str:
@@ -89,7 +93,7 @@ class Tools:
             {"type": "status", "data": {"description": "Searching...", "done": False}}
         )
         try:
-            creds = self._build_credentials()
+            creds = await self._build_credentials()
             service = build("gmail", "v1", credentials=creds)
 
             message = MIMEText(body, "plain", "utf-8")
@@ -130,7 +134,7 @@ class Tools:
             {"type": "status", "data": {"description": "Searching...", "done": False}}
         )
         try:
-            creds = self._build_credentials()
+            creds = await self._build_credentials()
             service = build("gmail", "v1", credentials=creds)
 
             response = (
@@ -185,7 +189,7 @@ class Tools:
             {"type": "status", "data": {"description": "Searching...", "done": False}}
         )
         try:
-            creds = self._build_credentials()
+            creds = await self._build_credentials()
             service = build("gmail", "v1", credentials=creds)
 
             message = (

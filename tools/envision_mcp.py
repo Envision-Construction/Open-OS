@@ -9,6 +9,7 @@ required_pip_packages: aiohttp
 
 import json
 import asyncio
+import time
 from typing import Any, Callable, Optional
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,8 @@ class Tools:
         self._session_id: Optional[str] = None
         self._initialized: bool = False
         self._request_counter: int = 0
+        self._init_lock = asyncio.Lock()
+        self._init_failed_until: float = 0
 
     def _next_id(self) -> int:
         self._request_counter += 1
@@ -73,10 +76,10 @@ class Tools:
                 content_type = resp.headers.get("Content-Type", "")
 
                 if "text/event-stream" in content_type:
-                    # SSE response — collect the last JSON-RPC result
+                    # SSE response — stream lines to avoid buffering entire body
                     result = None
-                    body = await resp.text()
-                    for line in body.split("\n"):
+                    async for line_bytes in resp.content:
+                        line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
                         line = line.strip()
                         if line.startswith("data:"):
                             data_str = line[5:].strip()
@@ -89,25 +92,60 @@ class Tools:
                 else:
                     return await resp.json()
 
+    async def _mcp_notify(self, method: str, params: dict = None) -> None:
+        """Send a JSON-RPC notification (no id field, no response expected)."""
+        import aiohttp
+
+        payload = {"jsonrpc": "2.0", "method": method}
+        if params:
+            payload["params"] = params
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+
+        timeout = aiohttp.ClientTimeout(total=self.valves.request_timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            try:
+                async with session.post(
+                    self.valves.mcp_server_url,
+                    json=payload,
+                    headers=headers,
+                ) as resp:
+                    if "Mcp-Session-Id" in resp.headers:
+                        self._session_id = resp.headers["Mcp-Session-Id"]
+            except Exception:
+                pass  # notifications are fire-and-forget
+
     async def _ensure_initialized(self):
         """Initialize the MCP session if not already done."""
         if self._initialized:
             return
-        result = await self._mcp_request(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "open-webui-envision-bridge",
-                    "version": "0.1.0",
+        async with self._init_lock:
+            if self._initialized:
+                return
+            if time.time() < self._init_failed_until:
+                return
+            result = await self._mcp_request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "open-webui-envision-bridge",
+                        "version": "0.1.0",
+                    },
                 },
-            },
-        )
-        if result and "result" in result:
-            self._initialized = True
-            # Send initialized notification
-            await self._mcp_request("notifications/initialized")
+            )
+            if result and "result" in result:
+                self._initialized = True
+                # Send as a notification — no id field, no response expected
+                await self._mcp_notify("notifications/initialized")
+            else:
+                self._init_failed_until = time.time() + 10
 
     async def ask_envision(
         self,

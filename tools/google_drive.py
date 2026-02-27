@@ -9,6 +9,7 @@ required_pip_packages: google-auth google-auth-oauthlib google-api-python-client
 
 from __future__ import annotations
 
+import asyncio
 import io
 from typing import Any, Callable
 
@@ -43,9 +44,9 @@ class Tools:
             __event_emitter__, f"Searching Drive for: {query}", "in_progress"
         )
         try:
-            service = self._build_service()
+            service = await self._build_service()
             query_str = self._build_search_query(query)
-            response = (
+            response = await asyncio.to_thread(
                 service.files()
                 .list(
                     q=query_str,
@@ -54,7 +55,7 @@ class Tools:
                     supportsAllDrives=True,
                     includeItemsFromAllDrives=True,
                 )
-                .execute()
+                .execute
             )
             files = response.get("files", [])
             if not files:
@@ -87,15 +88,15 @@ class Tools:
             __event_emitter__, "Fetching file metadata", "in_progress"
         )
         try:
-            service = self._build_service()
-            metadata = (
+            service = await self._build_service()
+            metadata = await asyncio.to_thread(
                 service.files()
                 .get(
                     fileId=file_id,
                     fields="id, name, mimeType",
                     supportsAllDrives=True,
                 )
-                .execute()
+                .execute
             )
             name = metadata.get("name", "")
             mime_type = metadata.get("mimeType", "")
@@ -104,7 +105,7 @@ class Tools:
             await self._emit_status(
                 __event_emitter__, "Downloading file content", "in_progress"
             )
-            content = self._download_as_text(request)
+            content = await asyncio.to_thread(self._download_as_text, request)
             content = self._truncate_text(content)
 
             await self._emit_status(
@@ -128,8 +129,8 @@ class Tools:
             __event_emitter__, f"Listing folder: {folder_id}", "in_progress"
         )
         try:
-            service = self._build_service()
-            response = (
+            service = await self._build_service()
+            response = await asyncio.to_thread(
                 service.files()
                 .list(
                     q=f"'{folder_id}' in parents and trashed = false",
@@ -138,7 +139,7 @@ class Tools:
                     supportsAllDrives=True,
                     includeItemsFromAllDrives=True,
                 )
-                .execute()
+                .execute
             )
             files = response.get("files", [])
             if not files:
@@ -171,15 +172,15 @@ class Tools:
             __event_emitter__, f"Fetching info for: {file_id}", "in_progress"
         )
         try:
-            service = self._build_service()
-            info = (
+            service = await self._build_service()
+            info = await asyncio.to_thread(
                 service.files()
                 .get(
                     fileId=file_id,
                     fields="id, name, mimeType, size, modifiedTime, owners",
                     supportsAllDrives=True,
                 )
-                .execute()
+                .execute
             )
             owner = ""
             owners = info.get("owners", [])
@@ -204,7 +205,7 @@ class Tools:
             )
             return f"Error getting file info: {exc}"
 
-    def _build_credentials(self) -> Credentials:
+    async def _build_credentials(self) -> Credentials:
         if not self.valves.google_client_id:
             raise ValueError("Missing google_client_id")
         if not self.valves.google_client_secret:
@@ -220,15 +221,20 @@ class Tools:
             client_secret=self.valves.google_client_secret,
             scopes=SCOPES,
         )
-        credentials.refresh(Request())
+        try:
+            await asyncio.to_thread(credentials.refresh, Request())
+        except Exception as e:
+            raise RuntimeError(f"Google credential refresh failed: {e}") from e
         return credentials
 
-    def _build_service(self):
-        credentials = self._build_credentials()
-        return build("drive", "v3", credentials=credentials, cache_discovery=False)
+    async def _build_service(self):
+        credentials = await self._build_credentials()
+        return await asyncio.to_thread(
+            build, "drive", "v3", credentials=credentials, cache_discovery=False
+        )
 
     def _build_search_query(self, query: str) -> str:
-        safe_query = query.replace("'", "\\'")
+        safe_query = query.replace("\\", "\\\\").replace("'", "\\'")
         return f"(name contains '{safe_query}' or fullText contains '{safe_query}')"
 
     def _build_download_request(self, service, file_id: str, mime_type: str):
