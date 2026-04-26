@@ -16,7 +16,7 @@ Internet → Cloud LB + IAP → Open Web UI → DLP Proxy → OpenClaw Gateway �
 
 | Component | Role | Image |
 |-----------|------|-------|
-| **OpenClaw** | AI gateway — routes to LLM providers, manages tools/skills | StatefulSet + 20Gi PVC |
+| **OpenClaw** | AI gateway — routes to LLM providers, manages tools/skills | Deployment + 20Gi PVC |
 | **Open Web UI** | Chat UI — conversations, RAG, user management | Deployment + 5Gi PVC |
 | **DLP Proxy** | PII inspection/redaction via GCP Sensitive Data Protection | Deployment (read-only FS) |
 
@@ -42,7 +42,7 @@ Internet → Cloud LB + IAP → Open Web UI → DLP Proxy → OpenClaw Gateway �
 
 ```bash
 # 1. Clone
-git clone https://github.com/avireddy0/Open-OS.git
+git clone https://github.com/Envision-Construction/Open-OS.git
 cd Open-OS
 
 # 2. Set environment
@@ -83,36 +83,29 @@ helm repo add external-secrets https://charts.external-secrets.io
 helm install external-secrets external-secrets/external-secrets \
   -n external-secrets --create-namespace
 
-# 5. Bootstrap Docker Hub secrets (one-time)
-DOCKERHUB_USERNAME='your-user' DOCKERHUB_TOKEN='your-token' \
-  ./scripts/bootstrap-dockerhub-gcp-secrets.sh open-os-prod
-
-# 6. Build once, then mirror to both Artifact Registry + Docker Hub
+# 5. Build and push image to Artifact Registry
 gcloud services enable cloudbuild.googleapis.com --project open-os-prod
 gcloud builds submit --project open-os-prod --config cloudbuild.yaml .
 
-# 7. Deploy to GKE
+# 6. Deploy to GKE
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/secrets-external.yaml
-kubectl apply -f k8s/openclaw-statefulset.yaml
+kubectl apply -f k8s/openclaw-deployment.yaml
 kubectl apply -f k8s/dlp-proxy-deployment.yaml
 kubectl apply -f k8s/open-webui-deployment.yaml
 kubectl apply -f k8s/services.yaml
 kubectl apply -f k8s/network-policies.yaml
 
-# 8. Set up ingress (after DNS is configured)
+# 7. Set up ingress (after DNS is configured)
 kubectl apply -f k8s/ingress.yaml
 ```
 
-### Docker Hub Sync
+### Image Registry
 
-- `cloudbuild.yaml` builds `dlp-proxy` once and pushes:
+- `cloudbuild.yaml` builds `dlp-proxy` once and pushes to GCP Artifact Registry:
   - `us-central1-docker.pkg.dev/open-os-prod/openclaw-registry/dlp-proxy:{SHORT_SHA,latest}`
-  - `docker.io/<dockerhub-username>/open-os-dlp-proxy:{SHORT_SHA,latest}`
-- `.github/workflows/dockerhub-sync.yml` keeps Docker Hub updated on every push to `main`.
-  - Configure GitHub repo secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
-- `k8s/dlp-proxy-deployment.yaml` pulls from Docker Hub (`docker.io/avireddy0/open-os-dlp-proxy:latest`).
-- Verify sync wiring anytime:
+- `k8s/dlp-proxy-deployment.yaml` pulls from Artifact Registry via Workload Identity (no image-pull secret required).
+- Verify the build/push wiring anytime:
 
 ```bash
 ./scripts/verify-dockerhub-gcp-sync.sh open-os-prod
@@ -137,11 +130,11 @@ kubectl apply -f k8s/ingress.yaml
 
 | Integration | Protocol | Status |
 |-------------|----------|--------|
-| Gmail | OAuth 2.0 (gog skill) | Planned |
-| Google Calendar | OAuth 2.0 (gog skill) | Planned |
-| Google Drive | OAuth 2.0 (gog skill) | Planned |
-| Slack | Socket Mode | Planned |
-| WhatsApp | Baileys (unofficial) | Planned |
+| Gmail | OAuth 2.0 (gog skill) | Implemented |
+| Google Calendar | OAuth 2.0 (gog skill) | Implemented |
+| Google Drive | OAuth 2.0 (gog skill) | Implemented |
+| Slack | OAuth 2.0 + Web API | Implemented |
+| WhatsApp | Evolution API | Implemented |
 
 ## Cost Estimate
 
@@ -164,7 +157,7 @@ Open-OS/
 │   └── Dockerfile
 ├── k8s/
 │   ├── namespace.yaml        # Namespace + PSS labels
-│   ├── openclaw-statefulset.yaml
+│   ├── openclaw-deployment.yaml
 │   ├── open-webui-deployment.yaml
 │   ├── dlp-proxy-deployment.yaml
 │   ├── services.yaml         # ClusterIP services
@@ -174,9 +167,8 @@ Open-OS/
 ├── scripts/
 │   ├── setup-gcp.sh          # Infrastructure provisioning
 │   ├── setup-oauth.sh        # OAuth credential setup
-│   ├── bootstrap-dockerhub-gcp-secrets.sh
 │   └── verify-dockerhub-gcp-sync.sh
-├── cloudbuild.yaml           # Build once -> push to AR + mirror to Docker Hub
+├── cloudbuild.yaml           # Build -> push to GCP Artifact Registry
 ├── docker-compose.yml        # Local development
 └── README.md
 ```
